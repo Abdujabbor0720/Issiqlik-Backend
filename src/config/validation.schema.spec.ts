@@ -86,8 +86,9 @@ describe('validationSchema', () => {
        * testni mo'rt qilardi — qoida qattiqlashtirilgan har safar
        * u yiqilib, ishni to'sib turardi.
        */
-      expect(validate({ ...validEnv(), [key]: placeholder }).length)
-        .toBeGreaterThan(0);
+      expect(
+        validate({ ...validEnv(), [key]: placeholder }).length,
+      ).toBeGreaterThan(0);
     });
 
     it('⚠️ uzunlik tekshiruvi YETARLI EMAS — shakl ham tekshiriladi', () => {

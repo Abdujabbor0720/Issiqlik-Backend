@@ -113,6 +113,89 @@ server {
 
 ---
 
+## 0.5. Deploy menejerida sozlash
+
+Panel maydonlari (Issiqlik-Backend uchun):
+
+| Maydon | Qiymat |
+|---|---|
+| Repository URL | `https://github.com/Abdujabbor0720/Issiqlik-Backend.git` |
+| Branch | `main` |
+| **Root directory** | **bo'sh qoldiriladi** — backend repozitoriya ILDIZIDA, `server/` papkasida emas |
+| Service name | `issiqlik-backend` |
+| Service type | Node.js (yoki Auto-detect — `package.json` ildizda) |
+| **Build command** | `npm ci && npm run build` |
+| **Start command** | `npm run start:prod` |
+| Port | `3000` |
+
+⚠️ **Migratsiya alohida buyruq sifatida yozilmaydi.** `npm` `prestart:prod`
+skriptini `start:prod` dan OLDIN o'zi ishga tushiradi va u
+`migration:run:prod` ni chaqiradi. Shu tufayli migratsiya har bir
+deploy va har bir qayta ishga tushishda bajariladi — unutish imkoni
+yo'q. Migratsiya yiqilsa, ilova UMUMAN ishga tushmaydi: bu ataylab,
+chunki eski sxema ustida ishlayotgan ilova jimgina noto'g'ri ma'lumot
+ko'rsatardi.
+
+⚠️ **`migration:run` EMAS, `migration:run:prod`.** Birinchisi `ts-node`
+ga tayanadi, u esa `devDependencies` da — ishlab chiqarish o'rnatishida
+(`npm ci --omit=dev`) mavjud bo'lmaydi. `:prod` varianti kompilyatsiya
+qilingan `dist/config/data-source.js` bilan ishlaydi.
+
+### Muhit o'zgaruvchilari
+
+`.env` git'ga tushmaydi, shuning uchun ular PANELDA kiritiladi.
+Ularsiz ilova ishga tushmaydi (Joi tekshiruvi to'xtatadi).
+
+**Majburiy (5 ta):**
+
+```
+DB_USERNAME=issiqlik
+DB_PASSWORD=<baza-paroli>
+DB_NAME=issiqlik_db
+JWT_ACCESS_SECRET=<openssl rand -base64 48>
+JWT_REFRESH_SECRET=<openssl rand -base64 48>
+```
+
+**Deploy uchun shart:**
+
+```
+NODE_ENV=production
+PORT=3000
+DB_HOST=127.0.0.1
+DB_PORT=5432
+CORS_ORIGINS=https://issiqlik.yaxshihayot.uz
+PUBLIC_BASE_URL=https://issiqlik-api.yaxshihayot.uz
+FIRMWARE_DIR=/var/lib/issiqlik/firmware
+ADMIN_LOGIN=<superadmin-login>
+ADMIN_PASSWORD=<superadmin-paroli>
+```
+
+⚠️⚠️ **`FIRMWARE_DIR` DEPLOY PAPKASIDAN TASHQARIDA.** Panel har deployda
+kodni qaytadan yoyadi; sukutdagi `./storage/firmware` o'sha papka
+ichida bo'lgani uchun yuklangan `.bin` fayllar YO'QOLADI, bazadagi
+`firmware_releases` yozuvlari esa qoladi — natijada qurilma
+yangilanishni so'raganda 500 oladi. Papkani oldindan tayyorlang:
+
+```bash
+sudo mkdir -p /var/lib/issiqlik/firmware
+sudo chown <ilova-foydalanuvchisi> /var/lib/issiqlik/firmware
+sudo chmod 700 /var/lib/issiqlik/firmware
+```
+
+⚠️⚠️ **Deploy papkasi `/var/www` ostida.** nginx uni statik fayl
+sifatida tarqatmasligiga ishonch hosil qiling: aks holda `.env`
+brauzerdan o'qilib qolardi. Yuqoridagi nginx namunasida API domeni
+faqat `proxy_pass` qiladi va `root` e'lon qilmaydi — shunday qoldiring.
+
+### Birinchi ishga tushish
+
+Bo'sh bazada tizim o'zi tayyorlanadi: migratsiyalar, 16 tuman va
+`ADMIN_LOGIN`/`ADMIN_PASSWORD` dan superadmin (`bootstrap.service.ts`).
+`npm run seed` faqat demo ma'lumot uchun — ishlab chiqarishda
+ishlatilmaydi.
+
+---
+
 ## 1. Qurilmani ro'yxatga olish va token berish
 
 ### Oddiy yo'l (tavsiya etiladi)
