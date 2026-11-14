@@ -469,6 +469,50 @@ Javob kodlari — qurilma xatti-harakati shunga bog'liq:
 | **403** | qurilma ro'yxatda yo'q (kutish ro'yxatiga tushadi) |
 | **429 / 5xx** | **keyinroq qayta yuboradi** — o'lchov yo'qolmaydi |
 
+### Tuman — plata menyusida tanlanadi (`district`)
+
+Plata kabinetdan hech narsa QABUL QILMAYDI, shuning uchun 16 ta tuman
+proshivkaga qotiriladi. Montajchi sozlash menyusida **nomni** tanlaydi,
+plata har signalda **SOATO kodini** yuboradi:
+
+```json
+{"device_id":"esp32-f42dc987e788","district":"1703206",
+ "institution_id":"12-maktab", "outlet_temperature_c":60.50}
+```
+
+| SOATO | Nom | | SOATO | Nom |
+|---|---|---|---|---|
+| 1703401 | Andijon shahri | | 1703221 | Jalaquduq tumani |
+| 1703405 | Xonobod shahri | | 1703224 | Xo‘jaobod tumani |
+| 1703203 | Andijon tumani | | 1703227 | Qo‘rg‘ontepa tumani |
+| 1703206 | Asaka tumani | | 1703230 | Marhamat tumani |
+| 1703209 | Baliqchi tumani | | 1703233 | Oltinko‘l tumani |
+| 1703212 | Bo‘ston tumani | | 1703236 | Paxtaobod tumani |
+| 1703215 | Buloqboshi tumani | | 1703239 | Ulug‘nor tumani |
+| 1703218 | Izboskan tumani | | 1703242 | Shahrixon tumani |
+
+Server qoidalari (biznes qarori, 2026-11-14):
+
+- **Tuman kabinetda O'ZGARTIRILMAYDI** — faqat plata menyusida.
+- Modul faqat **o'z tumanidagi** kotyolga biriktiriladi.
+- Biriktirilmagan modulni faqat **o'sha tuman mas'uli** (va admin) ko'radi.
+- Plata qayta sozlanib **boshqa tuman** yuborsa, eski tumandagi kotyoldan
+  **avtomatik ajratiladi** (audit jurnaliga yoziladi) va yangi tumanning
+  «Biriktirilmagan» ro'yxatiga tushadi.
+- **Noma'lum kod** (masalan `9999999`) tumanni o'zgartirMAYDI; kabinetda
+  «noma'lum: 9999999» deb ko'rinadi. So'rov rad etilmaydi.
+- Tizim kodi (`asaka`) va to'liq nom (`Asaka tumani`, tutuq belgisi har
+  xil bo'lsa ham) ham qabul qilinadi, lekin **asosiy shakl — SOATO**.
+  Qisqa nom («Andijon») qabul qilinMAYDI: shahar bilan tuman adashadi.
+- `district` yubormaydigan eski proshivka o'zgarishsiz ishlaydi; uning
+  tumani biriktirilgan kotyoldan olinadi, biriktirilmaganini faqat admin
+  ko'radi.
+
+`institution_id` — erkin matn (`[A-Za-z0-9 ._-]`, 64 belgigacha), FAQAT
+eslatma: qidiruvda yordam beradi, hech narsani yo'naltirmaydi. Haqiqiy
+muassasa — kabinetda biriktirilgan kotyolniki va istalgan vaqtda
+o'zgartiriladi.
+
 ### Xona (havo) harorati — QO'SHIMCHA maydon
 
 Server tayyor. Proshivkaga qo'shilishi kerak bo'lgan YAGONA narsa — xuddi

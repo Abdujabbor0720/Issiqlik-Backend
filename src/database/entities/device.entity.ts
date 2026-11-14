@@ -2,6 +2,7 @@ import { Exclude } from 'class-transformer';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Boiler } from './boiler.entity';
+import { District } from './district.entity';
 
 /**
  * ESP32 MODULI.
@@ -121,6 +122,38 @@ export class Device extends BaseEntity {
     nullable: true,
   })
   institutionHint!: string | null;
+
+  /**
+   * TUMAN — PLATA O'ZI YUBORADI, KABINETDA O'ZGARTIRILMAYDI.
+   *
+   * ⚠️⚠️ Biznes qarori (2026-11-14): montajchi plata menyusida tumanni
+   * tanlaydi, keyin u hech kim tomonidan tahrirlanmaydi. Modul faqat
+   * shu tumandagi kotyolga biriktiriladi va biriktirilmagan modulni
+   * faqat shu tuman mas'uli ko'radi. Plata boshqa tumanni yuborsa,
+   * eski tumandagi kotyoldan avtomatik ajratiladi.
+   *
+   * ⚠️ `null` — eski proshivka (tuman yubormaydi): tuman biriktirilgan
+   * kotyoldan olinadi. DTO'larda bu maydon YO'Q — ataylab.
+   */
+  @Index('IDX_devices_district_id')
+  @Column({ type: 'uuid', name: 'district_id', nullable: true })
+  districtId!: string | null;
+
+  @ManyToOne(() => District, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'district_id' })
+  district!: District | null;
+
+  /**
+   * Plata yuborgan XOM tuman qiymati — server taniy olmagan holatni
+   * ko'rsatish uchun («`9999999` yuboryapti — bunday tuman yo'q»).
+   */
+  @Column({
+    type: 'varchar',
+    length: 64,
+    name: 'reported_district',
+    nullable: true,
+  })
+  reportedDistrict!: string | null;
 
   /**
    * UMUMIY TOKENGA RUXSAT — SUKUT BO'YICHA `false`.

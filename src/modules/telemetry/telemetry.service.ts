@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 import {
+  AuditAction,
   BoilerStatus,
   ProbeKind,
   UserRole,
@@ -25,13 +26,22 @@ import {
 } from '../../helpers/probe-reading.helper';
 import { isUniqueViolation } from '../../helpers/db-errors.helper';
 import {
+  extractDistrictRef,
+  type DistrictRecord,
+} from '../../helpers/district-ref.helper';
+import {
   extractRoomSamples,
   type ParsedRoomSamples,
 } from '../../helpers/room-reading.helper';
 import { tashkentDayStart } from '../../helpers/date.helpers';
 import { applyDistrictScope } from '../../helpers/scope.helper';
 import { AlertsService } from '../alerts/alerts.service';
-import { DeviceAuthService } from '../devices/device-auth.service';
+import {
+  DeviceAuthService,
+  type AuthenticatedDevice,
+} from '../devices/device-auth.service';
+import { AuditService } from '../audit/audit.service';
+import { DistrictDirectoryService } from '../geo/district-directory.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SettingsService } from '../settings/settings.service';
@@ -128,6 +138,8 @@ export class TelemetryService {
     private readonly alerts: AlertsService,
     private readonly realtime: RealtimeGateway,
     private readonly roomsService: RoomsService,
+    private readonly districtDirectory: DistrictDirectoryService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -154,15 +166,35 @@ export class TelemetryService {
      * U o'zi mos HTTP xatosini tashlaydi: 401 (token yo'q/xato),
      * 403 (qurilma ro'yxatda yo'q — kutish ro'yxatiga yoziladi).
      */
+    /*
+     * ⚠️ TUMAN AUTENTIFIKATSIYADAN OLDIN aniqlanadi: yangi plata avtomatik
+     * ro'yxatga olinsa, u darhol O'Z tumani bilan yaratiladi va boshqa
+     * tuman mas'ullariga ko'rinmaydi.
+     */
+    const districtRaw = extractDistrictRef(rawPayload);
+    const districtText =
+      districtRaw === undefined ? null : sanitizeReported(districtRaw);
+    const district = await this.districtDirectory.resolve(districtRaw);
+
     const { device } = await this.auth.authenticate(dto.deviceId, apiKey, {
       ip: meta.ip,
       firmwareVersion: meta.firmwareVersion ?? dto.firmware ?? null,
       institutionHint: dto.institutionId ?? null,
+      districtId: district?.id ?? null,
+      reportedDistrict: districtText,
     });
 
     const now = new Date();
     const ip = meta.ip?.slice(0, 45) ?? null;
     const firmware = meta.firmwareVersion ?? dto.firmware ?? null;
+
+    /*
+     * ⚠️⚠️ TUMAN SINXRONLASH — o'lchov yozilishidan OLDIN. Plata boshqa
+     * tumanni yuborsa va eski tumandagi kotyolga ulangan bo'lsa, u shu
+     * yerda ajratiladi (`device.boilerId = null`) va BU o'lchov ham eski
+     * binoga yozilmaydi.
+     */
+    await this.syncDeviceDistrict(device, districtText, district);
 
     /*
      * ⚠️⚠️ HAROR+ATLARNI TASNIFLASH — `classifyProbeReading` da, BIR
@@ -379,6 +411,114 @@ export class TelemetryService {
       boilerAssigned: Boolean(device.boilerId),
       probe: classified.probe,
     };
+  }
+
+  /**
+   * PLATA YUBORGAN TUMANNI QURILMAGA YOZISH.
+   *
+   * ⚠️⚠️ BIZNES QARORI (2026-11-14): tuman — plataniki, kabinetda
+   * o'zgartirilmaydi. Plata BOSHQA tumanni yuborsa (qayta sozlangan yoki
+   * boshqa joyga ko'chirilgan) va eski tumandagi kotyolga ulangan bo'lsa —
+   * modul kotyoldan AVTOMATIK AJRATILADI. Aks holda boshqa binoning harorati
+   * eski binoga yozilaverardi. Modul yangi tuman mas'ulining
+   * «Biriktirilmagan» ro'yxatiga tushadi, eski kotyol esa «aloqa yo'q»
+   * bo'lib, ogohlantirish beradi.
+   *
+   * ⚠️ Server taniy olmagan qiymat tumanni O'ZGARTIRMAYDI — faqat xom
+   * qiymat saqlanadi va kabinetda ko'rinadi. Noto'g'ri kod modulni
+   * «hech qaysi tumanga» chiqarib yubormasligi kerak.
+   *
+   * ⚠️ Yozuv faqat QIYMAT O'ZGARGANDA: har signalda UPDATE — 2000 qurilmada
+   * sekundiga o'nlab bekor yozuv.
+   */
+  private async syncDeviceDistrict(
+    device: AuthenticatedDevice,
+    reported: string | null,
+    district: DistrictRecord | null,
+  ): Promise<void> {
+    // Eski proshivka — tuman yubormaydi, hech narsa o'zgarmaydi.
+    if (reported === null) return;
+
+    if (!district) {
+      if (device.reportedDistrict !== reported) {
+        await this.devices.update(device.id, { reportedDistrict: reported });
+        device.reportedDistrict = reported;
+        this.logger.warn(
+          `Qurilma ${device.deviceId}: noma‘lum tuman «${reported}» — ` +
+            'tuman o‘zgartirilmadi (plata menyusidagi kodni tekshiring)',
+        );
+      }
+      return;
+    }
+
+    if (device.districtId === district.id) {
+      if (device.reportedDistrict !== reported) {
+        await this.devices.update(device.id, { reportedDistrict: reported });
+        device.reportedDistrict = reported;
+      }
+      return;
+    }
+
+    const previousDistrictId = device.districtId;
+    let detached: { id: string; lotNumber: string } | null = null;
+
+    if (device.boilerId) {
+      const boiler = await this.boilers.findOne({
+        where: { id: device.boilerId },
+        select: { id: true, lotNumber: true, districtId: true },
+      });
+      if (boiler && boiler.districtId !== district.id) {
+        /*
+         * ⚠️ SHARTLI YOZUV (`boiler_id = :old`): o'qish va yozish orasida
+         * admin modulni allaqachon boshqa kotyolga ko'chirgan bo'lsa, uning
+         * qarori BOSIB KETILMAYDI.
+         */
+        const result = await this.devices
+          .createQueryBuilder()
+          .update()
+          .set({
+            boilerId: null,
+            districtId: district.id,
+            reportedDistrict: reported,
+          })
+          .where('id = :id', { id: device.id })
+          .andWhere('boiler_id = :boilerId', { boilerId: boiler.id })
+          .execute();
+        if (result.affected) detached = boiler;
+      }
+    }
+
+    if (!detached) {
+      await this.devices.update(device.id, {
+        districtId: district.id,
+        reportedDistrict: reported,
+      });
+    } else {
+      device.boilerId = null;
+    }
+    device.districtId = district.id;
+    device.reportedDistrict = reported;
+
+    if (detached) {
+      this.logger.warn(
+        `Qurilma ${device.deviceId}: tuman o‘zgardi → «${district.name}». ` +
+          `Lot ${detached.lotNumber} kotyolidan AVTOMATIK ajratildi`,
+      );
+      await this.audit.log({
+        action: AuditAction.UPDATE,
+        entityName: 'Device',
+        entityId: device.id,
+        summary:
+          `Modul ${device.deviceId} platada «${district.name}» tumani tanlangani ` +
+          `uchun lot ${detached.lotNumber} kotyolidan avtomatik ajratildi`,
+        before: { boilerId: detached.id, districtId: previousDistrictId },
+        after: { boilerId: null, districtId: district.id },
+      });
+    } else if (previousDistrictId) {
+      this.logger.log(
+        `Qurilma ${device.deviceId}: tuman yangilandi → «${district.name}»`,
+      );
+    }
   }
 
   /**
@@ -880,4 +1020,17 @@ export class TelemetryService {
       inletAvg: num(row.inletAvg),
     };
   }
+}
+
+/**
+ * Plata yuborgan xom tuman qiymati — saqlash va jurnal uchun.
+ *
+ * ⚠️ Boshqaruv belgilari olib tashlanadi (jurnalda soxta qator
+ * yasalmasin) va 64 belgigacha qisqartiriladi (ustun hajmi).
+ */
+function sanitizeReported(raw: unknown): string | null {
+  const text =
+    typeof raw === 'string' || typeof raw === 'number' ? String(raw) : '';
+  const clean = text.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 64);
+  return clean || null;
 }

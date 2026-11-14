@@ -25,6 +25,8 @@ export type AuthenticatedDevice = Pick<
   | 'institutionHint'
   | 'allowSharedToken'
   | 'firmwareVersion'
+  | 'districtId'
+  | 'reportedDistrict'
 >;
 
 export interface DeviceAuthResult {
@@ -37,6 +39,14 @@ export interface DeviceRequestMeta {
   ip: string | null;
   firmwareVersion: string | null;
   institutionHint?: string | null;
+  /**
+   * Plata yuborgan tuman — ALLAQACHON aniqlangan (`DistrictDirectoryService`).
+   * Faqat avtomatik ro'yxatga olishda yoziladi; mavjud qurilmaning
+   * tumanini telemetriya servisi yangilaydi (ajratish qoidasi bilan).
+   */
+  districtId?: string | null;
+  /** Plata yuborgan xom qiymat. */
+  reportedDistrict?: string | null;
 }
 
 /**
@@ -126,6 +136,8 @@ export class DeviceAuthService {
         firmwareVersion: true,
         boilerId: true,
         isActive: true,
+        districtId: true,
+        reportedDistrict: true,
       },
     });
 
@@ -283,6 +295,13 @@ export class DeviceAuthService {
           apiKeyPreview: this.keys.preview(personalKey),
           allowSharedToken: true,
           institutionHint: meta.institutionHint ?? null,
+          /*
+           * ⚠️ TUMAN — plata menyusida tanlangani. Shu tufayli yangi
+           * modul darhol O'Z tumani mas'ulining «Biriktirilmagan»
+           * ro'yxatiga tushadi va boshqa tumanga ko'rinmaydi.
+           */
+          districtId: meta.districtId ?? null,
+          reportedDistrict: meta.reportedDistrict ?? null,
           firmwareVersion: meta.firmwareVersion ?? null,
           lastIpAddress: meta.ip?.slice(0, 45) ?? null,
           note: 'Avtomatik ro‘yxatga olindi (umumiy token)',
@@ -320,6 +339,8 @@ export class DeviceAuthService {
           firmwareVersion: true,
           boilerId: true,
           isActive: true,
+          districtId: true,
+          reportedDistrict: true,
         },
       });
     }

@@ -90,6 +90,19 @@ export class BoilerSetupService {
           `«${existing.deviceId}» moduli o‘chirilgan — avval uni yoqing`,
         );
       }
+      /*
+       * ⚠️⚠️ MODUL FAQAT O'Z TUMANIDAGI KOTYOLGA (biznes qarori): tuman
+       * platadan keladi va kabinetda o'zgartirilmaydi.
+       */
+      if (
+        existing.districtId &&
+        existing.districtId !== dto.boiler.districtId
+      ) {
+        throw new BadRequestException(
+          `«${existing.deviceId}» moduli platada «${existing.district?.name ?? 'boshqa'}» ` +
+            'tumaniga sozlangan — kotyol ham shu tumanda bo‘lishi kerak',
+        );
+      }
     } else if (dto.device.mode === SetupDeviceMode.NEW) {
       prepared = await this.devices.prepareNewDevice({
         deviceId: dto.device.deviceId as string,

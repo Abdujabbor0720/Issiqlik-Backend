@@ -6,6 +6,7 @@ import { PendingDevice } from '../../database/entities/pending-device.entity';
 import { TelemetryReading } from '../../database/entities/telemetry-reading.entity';
 import { AlertsModule } from '../alerts/alerts.module';
 import { DevicesModule } from '../devices/devices.module';
+import { GeoModule } from '../geo/geo.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { RoomsModule } from '../rooms/rooms.module';
 import { DeviceThrottlerGuard } from './device-throttler.guard';
@@ -20,6 +21,8 @@ import { TelemetryService } from './telemetry.service';
     AlertsModule,
     RealtimeModule,
     RoomsModule,
+    // ⚠️ Plata yuborgan tumanni aniqlash (`DistrictDirectoryService`).
+    GeoModule,
   ],
   controllers: [IngestController, TelemetryController],
   /*

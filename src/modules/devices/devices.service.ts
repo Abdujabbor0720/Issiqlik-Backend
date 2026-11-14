@@ -56,20 +56,44 @@ export class DevicesService {
       .addSelect(['boiler.id', 'boiler.lotNumber', 'boiler.districtId'])
       .leftJoin('boiler.district', 'district')
       .addSelect(['district.id', 'district.name', 'district.shortName'])
+      // ⚠️ Plata yuborgan tuman — alohida taxallus (`district` kotyolniki).
+      .leftJoin('device.district', 'deviceDistrict')
+      .addSelect([
+        'deviceDistrict.id',
+        'deviceDistrict.name',
+        'deviceDistrict.shortName',
+      ])
       .orderBy('device.lastSeenAt', 'DESC', 'NULLS LAST')
       .skip(query.skip)
       .take(query.limit);
 
     /*
-     * ⚠️ Tuman chegarasi QURILMAGA emas, uning KOTYOLIGA qo'yiladi.
-     * Biriktirilmagan qurilma esa HAMMAGA ko'rinadi: u hali hech bir
-     * tumanga tegishli emas va yashirilsa, operator o'z tumaniga
-     * qurilma biriktira olmasdi.
+     * ⚠️⚠️ TUMAN CHEGARASI (biznes qarori, 2026-11-14):
+     *   • biriktirilgan modul — KOTYOLINING tumani bo'yicha;
+     *   • biriktirilmagan modul — PLATA YUBORGAN tuman bo'yicha: Asaka
+     *     platasini faqat Asaka mas'uli ko'radi va uni adashib boshqa
+     *     tuman kotyoliga ulay olmaydi.
+     * Tuman yubormaydigan ESKI platalar (biriktirilmagan, tumansiz) —
+     * faqat adminlarga ko'rinadi: ular qaysi tumanniki ekanini bilmaymiz.
      */
     if (user?.role === UserRole.OPERATOR && user.districtId) {
       qb.andWhere(
-        '(boiler.district_id = :scopeDistrict OR device.boiler_id IS NULL)',
+        '(boiler.district_id = :scopeDistrict ' +
+          'OR (device.boiler_id IS NULL AND device.district_id = :scopeDistrict))',
         { scopeDistrict: user.districtId },
+      );
+    }
+
+    /*
+     * ⚠️ Kotyol formasidagi «Ro'yxatdagi moduldan» uchun: faqat SHU tuman
+     * modullari. Tumansiz eski platalar ham qo'shiladi — ularni (operator
+     * chegarasidan o'tsa) shu tumanga biriktirish mumkin.
+     */
+    if (query.districtId) {
+      qb.andWhere(
+        '(COALESCE(device.district_id, boiler.district_id) = :filterDistrict ' +
+          'OR (device.district_id IS NULL AND device.boiler_id IS NULL))',
+        { filterDistrict: query.districtId },
       );
     }
 
@@ -104,7 +128,7 @@ export class DevicesService {
   async findOne(id: string): Promise<Device> {
     const device = await this.repo.findOne({
       where: { id },
-      relations: { boiler: { district: true } },
+      relations: { boiler: { district: true }, district: true },
     });
     if (!device) throw new NotFoundException('Qurilma topilmadi');
     return device;
@@ -120,10 +144,16 @@ export class DevicesService {
    */
   async findOneVisible(id: string, user?: AuthUser): Promise<Device> {
     const device = await this.findOne(id);
+    /*
+     * ⚠️ Ro'yxatdagi qoida bilan AYNI: biriktirilgani — kotyol tumani,
+     * biriktirilmagani — plata tumani bo'yicha.
+     */
+    const districtOfDevice = device.boiler
+      ? device.boiler.districtId
+      : device.districtId;
     if (
       user?.role === UserRole.OPERATOR &&
-      device.boiler &&
-      device.boiler.districtId !== user.districtId
+      districtOfDevice !== user.districtId
     ) {
       throw new NotFoundException('Qurilma topilmadi');
     }
@@ -245,7 +275,15 @@ export class DevicesService {
      * olishi mumkin edi. Biriktirilmagan qurilma — hech kimniki, uni
      * har kim o'z kotyoliga biriktira oladi.
      */
-    if (device.boiler) assertDistrictAccess(actor, device.boiler.districtId);
+    if (device.boiler) {
+      assertDistrictAccess(actor, device.boiler.districtId);
+    } else {
+      /*
+       * ⚠️ Biriktirilmagan modul — PLATA tumani bo'yicha. Tumansiz eski
+       * plata (`null`) operator uchun yopiq: uni faqat admin biriktiradi.
+       */
+      assertDistrictAccess(actor, device.districtId);
+    }
 
     const before = {
       deviceId: device.deviceId,
@@ -263,7 +301,12 @@ export class DevicesService {
 
     if (dto.boilerId !== undefined) {
       if (dto.boilerId)
-        await this.assertBoilerAssignable(dto.boilerId, actor, id);
+        await this.assertBoilerAssignable(
+          dto.boilerId,
+          actor,
+          id,
+          device.districtId,
+        );
       device.boilerId = dto.boilerId || null;
     }
 
@@ -341,10 +384,26 @@ export class DevicesService {
     boilerId: string,
     actor: AuthUser,
     exceptDeviceId?: string,
+    deviceDistrictId?: string | null,
   ): Promise<void> {
-    const boiler = await this.boilers.findOne({ where: { id: boilerId } });
+    const boiler = await this.boilers.findOne({
+      where: { id: boilerId },
+      relations: { district: true },
+    });
     if (!boiler) throw new BadRequestException('Bunday kotyol topilmadi');
     assertDistrictAccess(actor, boiler.districtId);
+
+    /*
+     * ⚠️⚠️ MODUL FAQAT O'Z TUMANIDAGI KOTYOLGA. Tuman platadan keladi va
+     * kabinetda o'zgartirilmaydi (biznes qarori). Boshqa tumanga ulash
+     * kerak bo'lsa — plata menyusida tumanni qayta tanlash kerak.
+     */
+    if (deviceDistrictId && deviceDistrictId !== boiler.districtId) {
+      throw new BadRequestException(
+        `Bu modul platada boshqa tumanga sozlangan — uni faqat o‘sha tumandagi ` +
+          `kotyolga biriktirish mumkin (tanlangan kotyol: ${boiler.district?.name ?? 'boshqa tuman'})`,
+      );
+    }
 
     if (boiler.isArchived) {
       throw new BadRequestException(

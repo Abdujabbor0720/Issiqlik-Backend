@@ -93,4 +93,13 @@ export class DeviceQueryDto extends PaginationDto {
   @IsBoolean()
   @IsOptional()
   offline?: boolean;
+
+  /**
+   * Shu tumandagi modullar (plata tumani yoki kotyol tumani) + tumansiz
+   * biriktirilmagan eski platalar. Kotyol formasida modul tanlash uchun.
+   */
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  districtId?: string;
 }
