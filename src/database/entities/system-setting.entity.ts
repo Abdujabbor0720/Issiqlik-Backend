@@ -92,6 +92,46 @@ export class SystemSetting extends BaseEntity {
   @Column({ type: 'int', name: 'offline_after_minutes', default: 15 })
   offlineAfterMinutes!: number;
 
+  /**
+   * XONA MINIMUMI, °C — bundan PAST bo'lsa xona «sovuq» va
+   * ogohlantirish ochiladi (sukut: 15).
+   */
+  @Column({
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    name: 'room_min_c',
+    default: 15,
+    transformer: requiredNumericTransformer,
+  })
+  roomMinC!: number;
+
+  /**
+   * XONA ME'YORI, °C — shundan boshlab xona «me'yorda» (sukut: 25).
+   *
+   * ⚠️ Minimum bilan me'yor orasi — «salqin»: ogohlantirish YO'Q,
+   * lekin xaritada sariq. Ikkala chegara bitta bo'lsa, 16 °C li xona
+   * 25 °C li xona bilan bir xil yashil ko'rinardi.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    name: 'room_norm_c',
+    default: 25,
+    transformer: requiredNumericTransformer,
+  })
+  roomNormC!: number;
+
+  /**
+   * Xona TARIXI necha daqiqada bir yoziladi (sukut: 10).
+   *
+   * ⚠️ Joriy qiymatga ta'sir QILMAYDI — u har signalda yangilanadi.
+   * Bu faqat grafik zichligi va baza hajmi o'rtasidagi muvozanat.
+   */
+  @Column({ type: 'int', name: 'room_sample_minutes', default: 10 })
+  roomSampleMinutes!: number;
+
   /** Hujjatdagi me'yoriy harorat, °C — yangi kotyol uchun sukut (60). */
   @Column({
     type: 'numeric',

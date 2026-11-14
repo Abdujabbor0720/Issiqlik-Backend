@@ -141,6 +141,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     PERMISSIONS.BOILERS_CREATE,
     PERMISSIONS.BOILERS_UPDATE,
     PERMISSIONS.DEVICES_VIEW,
+    /*
+     * ⚠️ TUMAN MAS'ULI O'ZI MODUL QO'SHADI (biznes qarori, 2026-11-14):
+     * kotyol va modulni u o'z tumanida o'zi yaratadi, administratorni
+     * kutmaydi. Xavfsiz, chunki:
+     *   • biriktirish faqat O'Z tumanidagi kotyolga (`assertBoilerAssignable`);
+     *   • boshqa tumandagi modulga TEGA OLMAYDI (`update` joriy kotyol
+     *     tumanini ham tekshiradi);
+     *   • o'chirish (`DEVICES_DELETE`) va kalitni almashtirish
+     *     (`DEVICES_ROTATE_KEY`) — HAMON faqat administratorda.
+     */
+    PERMISSIONS.DEVICES_CREATE,
     PERMISSIONS.DEVICES_UPDATE,
     PERMISSIONS.FIRMWARE_VIEW,
     PERMISSIONS.TELEMETRY_VIEW,

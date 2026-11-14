@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditAction, UserRole } from '../../common/constants/enums';
@@ -37,6 +38,7 @@ export class DevicesService {
     private readonly settings: SettingsService,
     private readonly audit: AuditService,
     private readonly pending: PendingDevicesService,
+    private readonly config: ConfigService,
   ) {}
 
   async list(
@@ -101,15 +103,49 @@ export class DevicesService {
     return device;
   }
 
-  async create(dto: CreateDeviceDto, actor: AuthUser): Promise<DeviceWithKey> {
+  /**
+   * BITTA QURILMA — foydalanuvchi ko'ra oladigan bo'lsa.
+   *
+   * ⚠️ Tuman mas'uli boshqa tumandagi kotyolga biriktirilgan modulni
+   * identifikator bo'yicha ochib ko'ra olmasligi kerak (404, 403 emas:
+   * 403 «bunday qurilma BOR» degani). Biriktirilmagan qurilma hammaga
+   * ko'rinadi — ro'yxatdagi qoida bilan AYNI.
+   */
+  async findOneVisible(id: string, user?: AuthUser): Promise<Device> {
+    const device = await this.findOne(id);
+    if (
+      user?.role === UserRole.OPERATOR &&
+      device.boiler &&
+      device.boiler.districtId !== user.districtId
+    ) {
+      throw new NotFoundException('Qurilma topilmadi');
+    }
+    return device;
+  }
+
+  /** Serverda umumiy qurilma tokeni yoqilganmi. */
+  sharedTokenEnabled(): boolean {
+    return Boolean(
+      this.config.get<string>('telemetry.sharedDeviceToken')?.trim(),
+    );
+  }
+
+  /**
+   * YANGI QURILMANI TAYYORLASH — tekshiruv + yozuv, lekin SAQLAMASDAN.
+   *
+   * ⚠️ Alohida, chunki uni ikki yo'l ishlatadi: oddiy yaratish va
+   * «kotyol + modul bitta formada» (u o'z tranzaksiyasida saqlaydi).
+   * Tekshiruv ikki nusxa bo'lsa, ular bir kuni ajralib ketardi.
+   */
+  async prepareNewDevice(
+    dto: Pick<CreateDeviceDto, 'deviceId' | 'name' | 'apiKey' | 'note'>,
+  ): Promise<{ device: Device; apiKey: string }> {
     const exists = await this.repo.existsBy({ deviceId: dto.deviceId });
     if (exists) {
       throw new ConflictException(
         `«${dto.deviceId}» identifikatorli qurilma allaqachon mavjud`,
       );
     }
-
-    if (dto.boilerId) await this.assertBoilerAssignable(dto.boilerId, actor);
 
     /*
      * ⚠️ MAVJUD KALITNI QABUL QILISH shart. Proshivka allaqachon
@@ -118,17 +154,43 @@ export class DevicesService {
      * montajchi har bir qurilmani qaytadan proshivka qilishi kerak
      * bo'lardi.
      */
-    const apiKey = dto.apiKey?.trim() || this.keys.generate();
+    const personalKey = dto.apiKey?.trim();
+    const apiKey = personalKey || this.keys.generate();
 
     const device = this.repo.create({
       deviceId: dto.deviceId,
       name: dto.name ?? null,
-      boilerId: dto.boilerId ?? null,
+      boilerId: null,
       apiKeyHash: this.keys.hash(apiKey),
       apiKeyPreview: this.keys.preview(apiKey),
       note: dto.note ?? null,
       isActive: true,
+      /*
+       * ⚠️⚠️ UMUMIY TOKEN — SHAXSIY KALIT KIRITILMAGAN BO'LSA.
+       *
+       * Hozirgi proshivka (GitHub yig'adi) UMUMIY token bilan keladi.
+       * Ilgari kabinetda yaratilgan qurilma `false` bilan tug'ilardi va
+       * natijada u HECH QACHON ulanmasdi: token rad etilardi (401),
+       * avtomatik ro'yxatga olish esa ishlamasdi — qurilma allaqachon
+       * bor. Montajchi platani o'rnatib ketardi, kabinetda esa «hech
+       * qachon» turaverardi.
+       *
+       * Shaxsiy kalit kiritilgan bo'lsa — eski, har plataga alohida
+       * yozilgan proshivka: umumiy tokenga ruxsat BERILMAYDI.
+       */
+      allowSharedToken: !personalKey && this.sharedTokenEnabled(),
     });
+
+    return { device, apiKey };
+  }
+
+  async create(dto: CreateDeviceDto, actor: AuthUser): Promise<DeviceWithKey> {
+    const { device, apiKey } = await this.prepareNewDevice(dto);
+
+    if (dto.boilerId) {
+      await this.assertBoilerAssignable(dto.boilerId, actor);
+      device.boilerId = dto.boilerId;
+    }
 
     const saved = await this.repo.save(device);
 
@@ -165,6 +227,19 @@ export class DevicesService {
     actor: AuthUser,
   ): Promise<Device> {
     const device = await this.findOne(id);
+
+    /*
+     * ⚠️⚠️ JORIY KOTYOLNING TUMANI HAM TEKSHIRILADI.
+     *
+     * Ilgari faqat YANGI kotyol tekshirilardi. Natijada tuman mas'uli
+     * BOSHQA tumandagi modulni: o'chirib qo'yishi (`isActive`),
+     * kotyoldan ajratishi (`boilerId: null` — tekshiruvsiz o'tardi),
+     * identifikatorini o'zgartirishi yoki o'z kotyoliga «ko'chirib»
+     * olishi mumkin edi. Biriktirilmagan qurilma — hech kimniki, uni
+     * har kim o'z kotyoliga biriktira oladi.
+     */
+    if (device.boiler) assertDistrictAccess(actor, device.boiler.districtId);
+
     const before = {
       deviceId: device.deviceId,
       boilerId: device.boilerId,
@@ -255,7 +330,7 @@ export class DevicesService {
 
   // ───────────────── ichki ─────────────────
 
-  private async assertBoilerAssignable(
+  async assertBoilerAssignable(
     boilerId: string,
     actor: AuthUser,
     exceptDeviceId?: string,

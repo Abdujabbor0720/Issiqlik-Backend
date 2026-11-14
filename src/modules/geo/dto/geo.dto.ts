@@ -63,4 +63,15 @@ export interface BoilerPoint {
   temperature: number | null;
   boilerCount: number;
   lastReadingAt: string | null;
+  /**
+   * XONALAR — nazoratdagi va dolzarb o'lchovlilar bo'yicha.
+   * `null` — xona yo'q yoki hammasining o'lchovi eskirgan.
+   */
+  rooms: {
+    count: number;
+    avg: number | null;
+    min: number | null;
+    /** Minimumdan past xonalar soni. */
+    cold: number;
+  } | null;
 }

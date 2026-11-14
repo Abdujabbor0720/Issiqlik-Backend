@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   AlertSeverity,
   AlertState,
@@ -11,6 +11,7 @@ import {
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { Alert } from '../../database/entities/alert.entity';
+import { isUniqueViolation } from '../../helpers/db-errors.helper';
 import { temperatureDelta } from '../../helpers/probe-reading.helper';
 import { applyDistrictScope } from '../../helpers/scope.helper';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -121,6 +122,159 @@ export class AlertsService {
     });
   }
 
+  /**
+   * XONALAR BO'YICHA OGOHLANTIRISH — bitta binoning hamma xonasi birdan.
+   *
+   * ⚠️⚠️ KOTYOL OGOHLANTIRISHIDAN TUBDAN FARQLI: u yerda bitta kotyolda
+   * bitta muammo (yangisi eskisini almashtiradi), bu yerda esa HAR XONA
+   * MUSTAQIL — 3 ta xona bir vaqtda sovuq bo'lishi mumkin va uchalasi
+   * ham ro'yxatda turishi kerak.
+   *
+   * ⚠️ Ochiq xona ogohlantirishlari BITTA so'rov bilan o'qiladi, har
+   * xona uchun alohida emas: qurilma har daqiqada 10 xonani yuboradi,
+   * 2000 binoda bu sekundiga yuzlab ortiqcha so'rov bo'lardi.
+   *
+   * ⚠️ XATO TASHLAMAYDI deb hisoblanmaydi — chaqiruvchi (telemetriya)
+   * uni o'zi yutadi: ogohlantirish YON TA'SIR, o'lchov esa saqlangan.
+   */
+  async evaluateRooms(input: {
+    boilerId: string;
+    lotNumber: string;
+    minC: number;
+    now: Date;
+    rooms: Array<{
+      roomId: string;
+      roomName: string;
+      temperature: number;
+      /** `true` — minimumdan past VA xona nazoratda. */
+      cold: boolean;
+    }>;
+  }): Promise<void> {
+    if (input.rooms.length === 0) return;
+
+    const open = await this.repo.find({
+      where: {
+        boilerId: input.boilerId,
+        type: AlertType.ROOM_COLD,
+        state: In([AlertState.OPEN, AlertState.ACKNOWLEDGED]),
+        roomId: In(input.rooms.map((room) => room.roomId)),
+      },
+      select: { id: true, roomId: true },
+    });
+    const openByRoom = new Map(open.map((alert) => [alert.roomId, alert.id]));
+
+    const toResolve: string[] = [];
+
+    for (const room of input.rooms) {
+      const existingId = openByRoom.get(room.roomId);
+
+      if (!room.cold) {
+        if (existingId) toResolve.push(existingId);
+        continue;
+      }
+
+      if (existingId) {
+        // ⚠️ `createdAt` ga TEGILMAYDI — «qachondan beri sovuq» shunda.
+        await this.repo.update(existingId, {
+          lastSeenAt: input.now,
+          temperature: room.temperature,
+        });
+        continue;
+      }
+
+      const message =
+        `Lot ${input.lotNumber}: «${room.roomName}» sovuq — ` +
+        `${room.temperature.toFixed(1)} °C (eng past ruxsat: ${input.minC} °C)`;
+
+      try {
+        const alert = await this.repo.save(
+          this.repo.create({
+            boilerId: input.boilerId,
+            roomId: room.roomId,
+            type: AlertType.ROOM_COLD,
+            severity: this.severityFor(AlertType.ROOM_COLD),
+            state: AlertState.OPEN,
+            message: message.slice(0, 400),
+            temperature: room.temperature,
+            lastSeenAt: input.now,
+          }),
+        );
+
+        this.realtime.emitAlert({
+          alertId: alert.id,
+          boilerId: alert.boilerId,
+          lotNumber: input.lotNumber,
+          type: alert.type,
+          severity: alert.severity,
+          message: alert.message,
+          at: input.now.toISOString(),
+        });
+      } catch (error) {
+        /*
+         * ⚠️ Poyga: parallel so'rov AYNI xona uchun qatorni allaqachon
+         * yozib qo'ydi (`UQ_alerts_open_per_room`). Natija kerakli —
+         * ochiq ogohlantirish bor. Qolgan xonalar baholanishda davom
+         * etadi; bitta xonadagi poyga ularni to'xtatmasligi kerak.
+         */
+        if (!isUniqueViolation(error)) throw error;
+      }
+    }
+
+    if (toResolve.length > 0) {
+      await this.repo.update(
+        { id: In(toResolve) },
+        { state: AlertState.RESOLVED, resolvedAt: input.now },
+      );
+    }
+  }
+
+  /**
+   * BITTA XONANING OCHIQ OGOHLANTIRISHLARINI YOPISH.
+   *
+   * ⚠️ Xona «nazoratdan chiqarilganda» (qozonxona xonasi, ta'mir)
+   * chaqiriladi: keyingi signalni kutmasdan yopiladi, aks holda admin
+   * «nazoratda emas» deb belgilagan xona ro'yxatda «sovuq» bo'lib
+   * turaverardi.
+   */
+  async resolveRoom(roomId: string, now: Date): Promise<void> {
+    await this.repo.update(
+      {
+        roomId,
+        state: In([AlertState.OPEN, AlertState.ACKNOWLEDGED]),
+      },
+      { state: AlertState.RESOLVED, resolvedAt: now },
+    );
+  }
+
+  /**
+   * ESKIRGAN XONALARNING OGOHLANTIRISHLARINI YOPISH (cron).
+   *
+   * ⚠️⚠️ Datchigi uzilgan xonaning «sovuq» xabari ABADIY ochiq
+   * qolmasligi kerak: biz u haqida endi HECH NARSA bilmaymiz. «Sovuq»
+   * deb turaversa, operator u yerga borib, xona issiq ekanini ko'rib
+   * qaytardi va keyingi xabarlarga ishonmay qo'yardi. Aloqa yo'qligi
+   * esa kotyol darajasida o'z ogohlantirishi (`offline`) bilan aytiladi.
+   *
+   * @returns Yopilgan ogohlantirishlar soni.
+   */
+  async resolveStaleRooms(staleBefore: Date, now: Date): Promise<number> {
+    const result = await this.repo
+      .createQueryBuilder()
+      .update(Alert)
+      .set({ state: AlertState.RESOLVED, resolvedAt: now })
+      .where('room_id IS NOT NULL')
+      .andWhere('state IN (:...states)', {
+        states: [AlertState.OPEN, AlertState.ACKNOWLEDGED],
+      })
+      .andWhere(
+        `room_id IN (SELECT id FROM rooms
+                     WHERE last_reading_at IS NULL OR last_reading_at < :staleBefore)`,
+        { staleBefore },
+      )
+      .execute();
+    return result.affected ?? 0;
+  }
+
   async list(
     query: AlertQueryDto,
     user?: AuthUser,
@@ -141,6 +295,9 @@ export class AlertsService {
       .addSelect(['organization.id', 'organization.name'])
       .leftJoin('alert.acknowledgedBy', 'ackUser')
       .addSelect(['ackUser.id', 'ackUser.fullName'])
+      // Xona ogohlantirishida — qaysi xona (kotyolnikida `null`).
+      .leftJoin('alert.room', 'room')
+      .addSelect(['room.id', 'room.name'])
       /*
        * ⚠️ Tartib: avval OG'IRLIK, keyin vaqt. Vaqt bo'yicha saralansa,
        * yangi «harorat past» ogohlantirishi bir soat oldingi «butun
@@ -227,6 +384,8 @@ export class AlertsService {
       .where('alert.state IN (:...states)', {
         states: [AlertState.OPEN, AlertState.ACKNOWLEDGED],
       })
+      // ⚠️ Faqat kotyol ogohlantirishlari: xonaniki `evaluate()` ga tegishli emas.
+      .andWhere('alert.room_id IS NULL')
       .getRawMany<{ boilerId: string }>();
     return new Set(rows.map((row) => row.boilerId));
   }
@@ -353,6 +512,13 @@ export class AlertsService {
        */
       case AlertType.SENSOR_FAULT:
         return AlertSeverity.WARNING;
+      /*
+       * ⚠️ `ROOM_COLD` — OGOHLANTIRISH. Bitta sovuq xona — butun
+       * qozonxona to'xtashi emas; kritik bo'lsa, u «kotyol ishlamayapti»
+       * xabarlari bilan bir qatorga chiqib, ularni ko'mib yuborardi.
+       */
+      case AlertType.ROOM_COLD:
+        return AlertSeverity.WARNING;
       default:
         return AlertSeverity.INFO;
     }
@@ -417,7 +583,14 @@ export class AlertsService {
       .where('boiler_id = :boilerId', { boilerId })
       .andWhere('state IN (:...states)', {
         states: [AlertState.OPEN, AlertState.ACKNOWLEDGED],
-      });
+      })
+      /*
+       * ⚠️⚠️ FAQAT KOTYOL OGOHLANTIRISHLARI. Bu shart bo'lmasa, kotyol
+       * aloqasi tiklangan zahoti «1-sinf sovuq» xabari ham YOPILARDI —
+       * holbuki xona hamon sovuq. Xona ogohlantirishlarini faqat
+       * `evaluateRooms()` yopadi.
+       */
+      .andWhere('room_id IS NULL');
 
     if (exceptType) qb.andWhere('type <> :exceptType', { exceptType });
     await qb.execute();

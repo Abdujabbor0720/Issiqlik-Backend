@@ -41,6 +41,20 @@ export class SettingsController {
           '«Faol» > «O‘rta» > «Kritik»',
       );
     }
+
+    /*
+     * ⚠️ XONA: minimum me'yordan PAST bo'lishi shart. Bazada ham CHECK
+     * bor (`CHK_system_settings_room_range`), lekin u 500 qaytarardi va
+     * admin nima noto'g'ri ekanini bilmasdi. Bu yerda — aniq sabab.
+     */
+    const roomMin = dto.roomMinC ?? current.roomMinC;
+    const roomNorm = dto.roomNormC ?? current.roomNormC;
+    if (!(roomMin < roomNorm)) {
+      throw new BadRequestException(
+        'Xona harorati: «Eng past» qiymati «Me‘yor» dan kichik bo‘lishi kerak',
+      );
+    }
+
     return this.service.update(dto);
   }
 }

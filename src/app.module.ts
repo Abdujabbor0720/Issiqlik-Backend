@@ -25,6 +25,7 @@ import { OtaModule } from './modules/ota/ota.module';
 import { HealthModule } from './modules/health/health.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { RoomsModule } from './modules/rooms/rooms.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { UsersModule } from './modules/users/users.module';
@@ -105,6 +106,8 @@ import { UsersModule } from './modules/users/users.module';
     BoilersModule,
     DevicesModule,
     AlertsModule,
+    // ⚠️ `TelemetryModule` DAN OLDIN: telemetriya xona o'lchovlarini shu modulga uzatadi.
+    RoomsModule,
     TelemetryModule,
     /*
      * ⚠️ OTA moduli `TelemetryModule` DAN KEYIN: u `DeviceThrottlerGuard`

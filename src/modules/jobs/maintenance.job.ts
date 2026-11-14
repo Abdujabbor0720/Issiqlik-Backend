@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AuthService } from '../auth/auth.service';
+import { RoomsService } from '../rooms/rooms.service';
+import { SettingsService } from '../settings/settings.service';
 import { TelemetryService } from '../telemetry/telemetry.service';
 
 /**
@@ -16,6 +18,8 @@ export class MaintenanceJob {
   constructor(
     private readonly telemetry: TelemetryService,
     private readonly auth: AuthService,
+    private readonly rooms: RoomsService,
+    private readonly settings: SettingsService,
   ) {}
 
   @Cron('20 3 * * *', {
@@ -25,9 +29,14 @@ export class MaintenanceJob {
   async run(): Promise<void> {
     try {
       const purged = await this.telemetry.purgeOld();
+      // ⚠️ Xona tarixi kotyol telemetriyasi bilan AYNI muddat saqlanadi.
+      const roomPurged = await this.rooms.purgeOld(
+        (await this.settings.get()).retentionDays,
+      );
       const tokens = await this.auth.purgeExpiredTokens();
       this.logger.log(
-        `Tungi tozalash: ${purged} o‘lchov, ${tokens} eskirgan token`,
+        `Tungi tozalash: ${purged} o‘lchov, ${roomPurged} xona o‘lchovi, ` +
+          `${tokens} eskirgan token`,
       );
     } catch (error) {
       /*

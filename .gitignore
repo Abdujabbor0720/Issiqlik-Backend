@@ -50,3 +50,6 @@ firmware/include/secrets.h
 firmware/tokenlar.csv
 firmware/.pio
 firmware/__pycache__/
+
+# Claude Code mahalliy sozlamalari (umumiy repozitoriyaga tushmaydi)
+.claude/settings.local.json

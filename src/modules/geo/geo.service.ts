@@ -7,6 +7,7 @@ import { Boiler } from '../../database/entities/boiler.entity';
 import { District } from '../../database/entities/district.entity';
 import { Region } from '../../database/entities/region.entity';
 import { applyDistrictScope } from '../../helpers/scope.helper';
+import { SettingsService } from '../settings/settings.service';
 import type {
   BoilerPoint,
   DistrictGeoJson,
@@ -32,6 +33,7 @@ export class GeoService {
     @InjectRepository(District)
     private readonly districts: Repository<District>,
     @InjectRepository(Boiler) private readonly boilers: Repository<Boiler>,
+    private readonly settings: SettingsService,
   ) {}
 
   async regionList(): Promise<Region[]> {
@@ -143,6 +145,11 @@ export class GeoService {
     districtIds: string[] | undefined,
     user?: AuthUser,
   ): Promise<BoilerPoint[]> {
+    const settings = await this.settings.get();
+    const roomFreshAfter = new Date(
+      Date.now() - settings.offlineAfterMinutes * 60_000,
+    );
+
     const qb = this.boilers
       .createQueryBuilder('boiler')
       .innerJoin('boiler.district', 'district')
@@ -160,6 +167,30 @@ export class GeoService {
         'boiler.boiler_count AS "boilerCount"',
         'boiler.last_reading_at AS "lastReadingAt"',
       ])
+      /*
+       * ⚠️⚠️ XONALAR — BITTA bog'liq quyi so'rov, alohida so'rov EMAS.
+       * Xaritada 2000 nuqta bor; har biri uchun xonalarni alohida
+       * so'rash 2000 ta qo'shimcha so'rov bo'lardi. Bu yerda esa har
+       * kotyol uchun `UQ_rooms_boiler_sensor` indeksining boshidan
+       * ~10 qator o'qiladi.
+       *
+       * ⚠️ Faqat NAZORATDAGI va DOLZARB o'lchovlar: eskirgan xona
+       * nuqtani yolg'on «iliq» qilib ko'rsatmasligi kerak.
+       */
+      .addSelect(
+        `(SELECT json_build_object(
+            'count', COUNT(*),
+            'avg', ROUND(AVG(r.last_temperature)::numeric, 1),
+            'min', MIN(r.last_temperature),
+            'cold', COUNT(*) FILTER (WHERE r.last_temperature < :roomMinC))
+          FROM rooms r
+          WHERE r.boiler_id = boiler.id
+            AND r.is_monitored = true
+            AND r.last_temperature IS NOT NULL
+            AND r.last_reading_at >= :roomFreshAfter)`,
+        'roomStats',
+      )
+      .setParameters({ roomMinC: settings.roomMinC, roomFreshAfter })
       .where('boiler.is_archived = false')
       .andWhere('boiler.lat IS NOT NULL')
       .andWhere('boiler.lng IS NOT NULL');
@@ -187,6 +218,7 @@ export class GeoService {
       lastReadingAt: row.lastReadingAt
         ? new Date(row.lastReadingAt as string).toISOString()
         : null,
+      rooms: toRoomStats(row.roomStats),
     }));
   }
 
@@ -307,4 +339,26 @@ export class GeoService {
     if (counts.medium / total >= 0.35) return BoilerStatus.MEDIUM;
     return BoilerStatus.ACTIVE;
   }
+}
+
+/**
+ * Xona statistikasini o'qish — `json_build_object` natijasi.
+ *
+ * ⚠️ `pg` drayveri `json` ni obyektga aylantiradi, lekin `numeric`
+ * qiymatlar SATR bo'lib keladi (`"21.4"`). Xona yo'q yoki o'lchovi
+ * eskirgan bo'lsa — `null` (xaritada «xona ma'lumoti yo'q»).
+ */
+function toRoomStats(raw: unknown): BoilerPoint['rooms'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Record<string, unknown>;
+  const count = Number(value.count ?? 0);
+  if (!count) return null;
+  const num = (input: unknown): number | null =>
+    input === null || input === undefined ? null : Number(input);
+  return {
+    count,
+    avg: num(value.avg),
+    min: num(value.min),
+    cold: Number(value.cold ?? 0),
+  };
 }

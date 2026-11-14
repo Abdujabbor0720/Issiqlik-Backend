@@ -469,6 +469,44 @@ Javob kodlari — qurilma xatti-harakati shunga bog'liq:
 | **403** | qurilma ro'yxatda yo'q (kutish ro'yxatiga tushadi) |
 | **429 / 5xx** | **keyinroq qayta yuboradi** — o'lchov yo'qolmaydi |
 
+### Xona (havo) harorati — QO'SHIMCHA maydon
+
+Server tayyor. Proshivkaga qo'shilishi kerak bo'lgan YAGONA narsa — xuddi
+shu telemetriya so'roviga `rooms` massivi:
+
+```json
+{"device_id":"esp32-f42dc987e788",
+ "inlet_temperature_c":45.12,"outlet_temperature_c":60.50,
+ "rooms":[{"key":"28ff4a2b1c000042","t":21.4},
+          {"key":"28ff7d9e03000031","t":18.9}]}
+```
+
+| Maydon | Ma'nosi |
+|---|---|
+| `key` | Datchikning **doimiy** identifikatori. Eng yaxshisi — DS18B20 ning 64-bitli manzili (hex). Katta-kichik harf farq qilmaydi. Ruxsat: `a-z 0-9 . _ : -`, 64 belgigacha |
+| `t` | Havo harorati, °C. Son yoki satr (`"21.4"`) |
+
+Qoidalar — proshivka shularga tayanishi mumkin:
+
+- **Xonalarni kabinetda oldindan yaratish SHART EMAS.** Noma'lum `key`
+  kelsa, xona o'zi «Xona N» bo'lib paydo bo'ladi; tuman mas'uli keyin uni
+  «1-sinf» deb nomlaydi. Kalit o'zgarmasa, nom va tarix saqlanadi —
+  plata almashtirilsa ham (datchiklar o'sha joyda qolsa).
+- **Bitta havo datchigi bo'lsa** massiv shart emas:
+  `"room_temperature_c": 21.4` ham qabul qilinadi (kalit `xona`).
+- **Diapazon −40…70 °C.** Undan tashqarisi (jumladan DS18B20 ning `85` va
+  `-127` nosozlik qiymatlari) **jim tashlanadi** — so'rov rad etilMAYDI,
+  kotyol harorati baribir yoziladi.
+- **Buzuq xona qismi so'rovni buzmaydi.** Xona yuki — qo'shimcha
+  ma'lumot; javob kodi faqat kotyol harorati bo'yicha (yuqoridagi jadval).
+- Quvur datchiklari umuman ishlamasa-yu, xonalar kelsa — **201**
+  (`status: null`). Plata faqat xonalar uchun ham o'rnatilishi mumkin.
+- Bitta so'rovda **32 xonagacha**, bitta binoda **64 xonagacha**.
+- Xona faqat **kotyolga biriktirilgan** qurilmadan qabul qilinadi
+  (xona binoga tegishli). Biriktirilgandan keyingi birinchi signalda
+  xonalar o'zi paydo bo'ladi.
+- Eski proshivka (`rooms` siz) **o'zgarishsiz ishlayveradi**.
+
 ### OTA
 
 ```

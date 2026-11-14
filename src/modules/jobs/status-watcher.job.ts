@@ -145,5 +145,29 @@ export class StatusWatcherJob {
           `${evaluated} ta ogohlantirish tekshirildi`,
       );
     }
+
+    /*
+     * ⚠️ DATCHIGI JIM QOLGAN XONANING «SOVUQ» XABARI YOPILADI: u haqida
+     * endi hech narsa bilmaymiz. Ochiq turaversa, operator u yerga
+     * borib xona issiq ekanini ko'rardi va keyingi xabarlarga
+     * ishonmay qo'yardi. Aloqa yo'qligi kotyol darajasida o'z xabari
+     * bilan aytiladi.
+     *
+     * ⚠️ Xato YUTILADI: bu qism kotyol holati kuzatuvidan keyin va
+     * undan mustaqil — uning xatosi kotyollar baholanishini qaytarmasin.
+     */
+    try {
+      const closed = await this.alerts.resolveStaleRooms(staleBefore, now);
+      if (closed > 0) {
+        this.logger.log(
+          `Holat kuzatuvi: ${closed} ta xona ogohlantirishi yopildi (o‘lchov eskirgan)`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        'Xona ogohlantirishlarini tekshirib bo‘lmadi: ' +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
   }
 }

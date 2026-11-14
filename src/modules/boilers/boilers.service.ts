@@ -119,12 +119,20 @@ export class BoilersService {
     return boiler;
   }
 
-  async create(dto: CreateBoilerDto, actor: AuthUser): Promise<Boiler> {
+  /**
+   * YANGI KOTYOLNI TAYYORLASH — tekshiruv + yozuv, SAQLAMASDAN.
+   *
+   * ⚠️ Alohida, chunki uni ikki yo'l ishlatadi: oddiy yaratish va
+   * «kotyol + modul bitta formada» (`BoilerSetupService`, o'z
+   * tranzaksiyasida saqlaydi). Tekshiruvlar (tuman huquqi, tuman bor,
+   * lot bo'sh) ikki nusxa bo'lsa, bir kuni ajralib ketardi.
+   */
+  async prepareNew(dto: CreateBoilerDto, actor: AuthUser): Promise<Boiler> {
     assertDistrictAccess(actor, dto.districtId);
     await this.assertDistrictExists(dto.districtId);
     await this.assertLotFree(dto.lotNumber);
 
-    const boiler = this.repo.create({
+    return this.repo.create({
       ...dto,
       firmId: dto.firmId ?? null,
       organizationId: dto.organizationId ?? null,
@@ -147,7 +155,10 @@ export class BoilersService {
       currentStatus: BoilerStatus.OFFLINE,
       statusChangedAt: new Date(),
     });
+  }
 
+  async create(dto: CreateBoilerDto, actor: AuthUser): Promise<Boiler> {
+    const boiler = await this.prepareNew(dto, actor);
     const saved = await this.repo.save(boiler);
     await this.audit.log({
       actor,

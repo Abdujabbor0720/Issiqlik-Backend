@@ -18,6 +18,7 @@ import {
 import { PendingDevice } from './pending-device.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { Region } from './region.entity';
+import { Room, RoomReading } from './room.entity';
 import { SystemSetting } from './system-setting.entity';
 import { TelemetryReading } from './telemetry-reading.entity';
 import { User } from './user.entity';
@@ -43,6 +44,9 @@ export const ENTITIES = [
   Boiler,
   Device,
   TelemetryReading,
+  // ⚠️ `Room` `Alert` dan OLDIN: ogohlantirish xonaga `FK` bilan bog'lanadi.
+  Room,
+  RoomReading,
   Alert,
   SystemSetting,
   AuditLog,
@@ -75,6 +79,8 @@ export {
   Organization,
   RefreshToken,
   Region,
+  Room,
+  RoomReading,
   SystemSetting,
   TelemetryReading,
   User,

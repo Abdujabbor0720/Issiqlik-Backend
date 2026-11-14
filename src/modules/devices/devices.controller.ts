@@ -79,8 +79,9 @@ export class DevicesController {
 
   @Get(':id')
   @RequirePermissions(PERMISSIONS.DEVICES_VIEW)
-  findOne(@Param() params: IdParamDto) {
-    return this.service.findOne(params.id);
+  findOne(@Param() params: IdParamDto, @CurrentUser() user: AuthUser) {
+    // ⚠️ Tuman chegarasi bilan — ro'yxatdagi qoida bilan AYNI.
+    return this.service.findOneVisible(params.id, user);
   }
 
   @Post()

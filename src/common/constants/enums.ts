@@ -118,7 +118,32 @@ export enum AlertType {
    * umuman ko'rib bo'lmasdi.
    */
   NO_CIRCULATION = 'no_circulation',
+  /**
+   * XONA SOVUQ — havo harorati sozlamadagi minimumdan past.
+   *
+   * ⚠️⚠️ BU KOTYOL HOLATI EMAS, XONA HOLATI. Kotyol 70 °C bersa ham
+   * radiatori yorilgan yoki derazasi sinib yotgan sinfxona sovuq
+   * bo'ladi. Shuning uchun xona ogohlantirishlari kotyol
+   * ogohlantirishlaridan ALOHIDA yashaydi (`alerts.room_id`): biri
+   * ikkinchisini YOPMAYDI. Aks holda «kotyol sovuq» ochilganda «1-sinf
+   * sovuq» jimgina yopilib, eng muhim xabar yo'qolardi.
+   */
+  ROOM_COLD = 'room_cold',
 }
+
+/**
+ * Xona ogohlantirishi turlari — kotyol ogohlantirishlaridan AJRATISH uchun.
+ *
+ * ⚠️ Kotyol ogohlantirishlari BIR-BIRINI almashtiradi (bitta kotyolda
+ * bir vaqtda bitta muammo), xona ogohlantirishlari esa HAR XONADA
+ * mustaqil. Ikki to'plam aralashsa, `resolveOpen` bir xonaning
+ * xabarini boshqa turdagi kotyol xabari bilan yopib yuborardi.
+ *
+ * ⚠️ «Xona issiq» turi ATAYLAB YO'Q: talab faqat me'yor va minimum.
+ * So'ralmagan ogohlantirish (qozonxona xonasidagi 35 °C datchik)
+ * shovqin bo'lib, haqiqiy «sovuq» xabarlarini ko'mib yuborardi.
+ */
+export const ROOM_ALERT_TYPES: readonly AlertType[] = [AlertType.ROOM_COLD];
 
 /**
  * TARQATISH (OTA rollout) HOLATI.

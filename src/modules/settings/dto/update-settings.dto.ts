@@ -78,6 +78,52 @@ export class UpdateSettingsDto {
   @IsOptional()
   normTemperature?: number;
 
+  /*
+   * ─────────────── XONA (HAVO) HARORATI ───────────────
+   * ⚠️ Chegaralar havo diapazoni bilan bir xil (`AIR_MIN_C`/`AIR_MAX_C`,
+   * -40…70): undan tashqaridagi qiymat datchikdan umuman qabul
+   * qilinmaydi, unga chegara qo'yish ma'nosiz bo'lardi.
+   * ⚠️ «Minimum < me'yor» — kontrollerda (qisman yangilashda mavjud
+   * qiymat ham kerak).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Xona: eng past ruxsat etilgan harorat, °C (pastrog‘i — ogohlantirish)',
+    example: 15,
+  })
+  @Transform(toNumber)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(-40)
+  @Max(69)
+  @IsOptional()
+  roomMinC?: number;
+
+  @ApiPropertyOptional({
+    description: 'Xona: me‘yoriy harorat, °C',
+    example: 25,
+  })
+  @Transform(toNumber)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(-39)
+  @Max(70)
+  @IsOptional()
+  roomNormC?: number;
+
+  /**
+   * ⚠️ Faqat TARIX zichligi. Joriy qiymat va ogohlantirish har
+   * signalda ishlaydi — bu qiymat ularni sekinlashtirmaydi.
+   */
+  @ApiPropertyOptional({
+    description: 'Xona tarixi necha daqiqada bir yoziladi',
+    example: 10,
+  })
+  @Transform(toNumber)
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  @IsOptional()
+  roomSampleMinutes?: number;
+
   @ApiPropertyOptional({ description: 'Telemetriya saqlash muddati, kun' })
   @Transform(toNumber)
   @IsInt()

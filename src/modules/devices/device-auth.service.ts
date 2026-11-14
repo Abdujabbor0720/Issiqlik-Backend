@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Device } from '../../database/entities/device.entity';
 import { PendingDevice } from '../../database/entities/pending-device.entity';
+import { isUniqueViolation } from '../../helpers/db-errors.helper';
 import { DeviceKeyService } from './device-key.service';
 
 /** Token qanday tekshirilgani — jurnal va kabinet uchun. */
@@ -75,15 +76,7 @@ const PENDING_DEVICES_LIMIT = 200;
  * `driverError` ichiga o'raydi, lekin ayrim yo'llarda u
  * to'g'ridan-to'g'ri obyektda bo'ladi.
  */
-function isUniqueViolation(error: unknown): boolean {
-  const candidate = error as {
-    code?: unknown;
-    driverError?: { code?: unknown };
-  };
-  return (
-    candidate?.driverError?.code === '23505' || candidate?.code === '23505'
-  );
-}
+// ⚠️ `isUniqueViolation` — `helpers/db-errors.helper.ts` (yagona manba).
 
 @Injectable()
 export class DeviceAuthService {

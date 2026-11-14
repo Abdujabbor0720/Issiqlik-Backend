@@ -23,10 +23,16 @@ import {
   DS18B20_MIN_C,
   classifyProbeReading,
 } from '../../helpers/probe-reading.helper';
+import { isUniqueViolation } from '../../helpers/db-errors.helper';
+import {
+  extractRoomSamples,
+  type ParsedRoomSamples,
+} from '../../helpers/room-reading.helper';
 import { tashkentDayStart } from '../../helpers/date.helpers';
 import { applyDistrictScope } from '../../helpers/scope.helper';
 import { AlertsService } from '../alerts/alerts.service';
 import { DeviceAuthService } from '../devices/device-auth.service';
+import { RoomsService } from '../rooms/rooms.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SettingsService } from '../settings/settings.service';
 import type { IngestDto } from './dto/ingest.dto';
@@ -36,10 +42,17 @@ export interface IngestResult {
   ok: true;
   /** Qurilma shu javobdan keyingi signalgacha qancha kutishi mumkin. */
   nextIntervalSec: number;
-  status: BoilerStatus;
+  /**
+   * ⚠️ `null` — FAQAT xona o'lchovi kelganda (quvur datchiklari
+   * yaroqli qiymat bermagan). Kotyol holati bu holatda NOMA'LUM va
+   * uni to'qib yozish mumkin emas.
+   */
+  status: BoilerStatus | null;
   boilerAssigned: boolean;
   /** O'lchovda qaysi datchik qatnashgani — qurilma jurnalida ko'rinadi. */
-  probe: ProbeKind;
+  probe: ProbeKind | null;
+  /** Qabul qilingan xona o'lchovlari soni (yuborilmagan bo'lsa 0). */
+  rooms: number;
 }
 
 /**
@@ -81,15 +94,7 @@ const MEASURED_AT_MAX_AGE_MS = 24 * 60 * 60_000;
  * ayrim yo'llarda kod to'g'ridan-to'g'ri obyektda bo'ladi. Faqat
  * bittasi tekshirilsa, xato jimgina 500 bo'lib o'tib ketardi.
  */
-function isUniqueViolation(error: unknown): boolean {
-  const candidate = error as {
-    code?: unknown;
-    driverError?: { code?: unknown };
-  };
-  return (
-    candidate?.driverError?.code === '23505' || candidate?.code === '23505'
-  );
-}
+// ⚠️ `isUniqueViolation` — `helpers/db-errors.helper.ts` (yagona manba).
 
 export interface SeriesPoint {
   t: string;
@@ -122,6 +127,7 @@ export class TelemetryService {
     private readonly settings: SettingsService,
     private readonly alerts: AlertsService,
     private readonly realtime: RealtimeGateway,
+    private readonly roomsService: RoomsService,
   ) {}
 
   /**
@@ -172,6 +178,14 @@ export class TelemetryService {
     });
 
     /*
+     * ⚠️ XONA (HAVO) O'LCHOVLARI — xom yukdan, DTO dan emas. Ular
+     * QO'SHIMCHA ma'lumot: buzuq xona qismi so'rovni rad ETMAYDI
+     * (`parseRoomSamples` xato tashlamaydi), faqat jurnalga yoziladi.
+     */
+    const roomPayload = extractRoomSamples(rawPayload);
+    this.logRejectedRooms(device.deviceId, roomPayload);
+
+    /*
      * ⚠️⚠️ YAROQSIZ O'LCHOV — 422, LEKIN QURILMA «TIRIK» DEB BELGILANADI.
      *
      * Qurilma TIRIKLIGI va O'LCHOVNING yaroqliligi — IKKI BOSHQA
@@ -197,6 +211,38 @@ export class TelemetryService {
           `chiqish=${dto.outletTemperature ?? '—'}, ` +
           `yakka=${dto.singleTemperature ?? '—'})`,
       );
+
+      /*
+       * ⚠️⚠️ QUVUR O'LCHOVI YO'Q, LEKIN XONALAR BOR — 200, 422 EMAS.
+       *
+       * Ikki holat: (a) quvur datchiklari uzilgan, xona datchiklari
+       * ishlayapti; (b) plata faqat xonalar uchun o'rnatilgan. Ikkalasida
+       * ham 422 qaytarilsa, proshivka (§3) butun yukni TASHLARDI va
+       * xona haroratlari ham yo'qolardi. Kotyol holatiga TEGILMAYDI —
+       * u haqiqatan noma'lum va belgilangan muddatdan keyin o'zi «aloqa
+       * yo'q» ga o'tadi.
+       *
+       * ⚠️ Xona — faqat kotyolga biriktirilgan qurilmada (xona binoga
+       * tegishli). Biriktirilmagan qurilma uchun avvalgidek 422.
+       */
+      if (device.boilerId && roomPayload.samples.length > 0) {
+        const roomRecordedAt =
+          this.resolveMeasuredAt(dto.measuredAt, now, device.deviceId) ?? now;
+        const accepted = await this.ingestRooms(
+          device.boilerId,
+          roomPayload,
+          roomRecordedAt,
+          now,
+        );
+        return {
+          ok: true,
+          nextIntervalSec: 30,
+          status: null,
+          boilerAssigned: true,
+          probe: null,
+          rooms: accepted,
+        };
+      }
 
       throw new UnprocessableEntityException(
         `Harorat o‘lchov diapazonidan tashqarida (${DS18B20_MIN_C}…${DS18B20_MAX_C} °C)`,
@@ -309,8 +355,21 @@ export class TelemetryService {
       });
     }
 
+    /*
+     * ⚠️ Xonalar FAQAT yangi yozilgan o'lchovda (`stored`): takrorlangan
+     * (oflayn navbat qayta yuborgan) yuk xonalarni ikkinchi marta
+     * yozmasligi kerak. Kotyolga biriktirilmagan qurilmada xona
+     * yaratilmaydi — u qaysi binoda ekani noma'lum; biriktirilgandan
+     * keyingi birinchi signalda xonalar o'zi paydo bo'ladi.
+     */
+    const roomsAccepted =
+      device.boilerId && stored
+        ? await this.ingestRooms(device.boilerId, roomPayload, recordedAt, now)
+        : 0;
+
     return {
       ok: true,
+      rooms: roomsAccepted,
       /*
        * ⚠️ Faqat ESKI proshivka uchun ishora: v2.0.0 bu maydonni
        * o'qimaydi, uning oralig'i `config.h` da qotirilgan (60 s).
@@ -320,6 +379,81 @@ export class TelemetryService {
       boilerAssigned: Boolean(device.boilerId),
       probe: classified.probe,
     };
+  }
+
+  /**
+   * XONALARNI QABUL QILISH — XATOSI YUTILADI.
+   *
+   * ⚠️⚠️ Bu yerdagi xato qurilmaga YETIB BORMASLIGI kerak: kotyol
+   * o'lchovi allaqachon saqlangan, xatoni qaytarish esa qurilmani AYNI
+   * yukni qayta-qayta yuborishga majburlardi (oflayn navbat). Xona —
+   * qo'shimcha ma'lumot; uning yo'qolishi jurnalda ko'rinadi.
+   *
+   * @returns Joriy qiymati yangilangan xonalar soni.
+   */
+  private async ingestRooms(
+    boilerId: string,
+    payload: ParsedRoomSamples,
+    recordedAt: Date,
+    now: Date,
+  ): Promise<number> {
+    if (payload.samples.length === 0) return 0;
+    try {
+      const boiler = await this.boilers.findOne({
+        where: { id: boilerId },
+        select: { id: true, lotNumber: true },
+      });
+      if (!boiler) return 0;
+
+      const result = await this.roomsService.ingest({
+        boilerId,
+        lotNumber: boiler.lotNumber,
+        samples: payload.samples,
+        recordedAt,
+        now,
+      });
+      if (result.created > 0) {
+        this.logger.log(
+          `Lot ${boiler.lotNumber}: ${result.created} ta yangi xona ` +
+            'avtomatik yaratildi — kabinetda nomlash kerak',
+        );
+      }
+      return result.updated;
+    } catch (error) {
+      this.logger.warn(
+        `Xona o‘lchovlari yozilmadi (kotyol ${boilerId}): ` +
+          (error instanceof Error ? error.message : String(error)),
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * RAD ETILGAN XONA QIYMATLARI — DALIL.
+   *
+   * ⚠️ Faqat kalit va sabab yoziladi: qiymat qurilmadan kelgan ixtiyoriy
+   * matn bo'lishi mumkin va jurnalni (yoki terminalni) buzmasligi uchun
+   * qisqartiriladi.
+   */
+  private logRejectedRooms(deviceId: string, payload: ParsedRoomSamples): void {
+    if (payload.rejected.length === 0) return;
+    const detail = payload.rejected
+      .slice(0, 8)
+      .map(
+        (item) =>
+          `${item.key ?? '?'}=${String(item.value)
+            .slice(0, 16)
+            // ⚠️ Boshqaruv belgilari (`\n`) jurnalda SOXTA qator yasardi.
+            .replace(/[\u0000-\u001f\u007f]/g, '?')} (${item.reason})`,
+      )
+      .join(', ');
+    const more =
+      payload.rejected.length > 8
+        ? ` va yana ${payload.rejected.length - 8}`
+        : '';
+    this.logger.warn(
+      `Qurilma ${deviceId}: xona qiymatlari rad etildi — ${detail}${more}`,
+    );
   }
 
   /**

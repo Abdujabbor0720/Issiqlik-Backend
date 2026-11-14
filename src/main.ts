@@ -147,7 +147,7 @@ async function bootstrap(): Promise<void> {
 
   if (!isProd) {
     const swaggerConfig = new DocumentBuilder()
-      .setTitle('Issiqlik — qozonxonalarni monitoring qilish tizimi')
+      .setTitle('Andijon viloyati issiqlik nazorat markazi')
       .setDescription(
         'Hududlardagi kotyollarni (qozonxonalarni) ESP32 modullari orqali ' +
           'real vaqtda kuzatish API’si.\n\n' +

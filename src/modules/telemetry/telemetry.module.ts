@@ -7,6 +7,7 @@ import { TelemetryReading } from '../../database/entities/telemetry-reading.enti
 import { AlertsModule } from '../alerts/alerts.module';
 import { DevicesModule } from '../devices/devices.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { RoomsModule } from '../rooms/rooms.module';
 import { DeviceThrottlerGuard } from './device-throttler.guard';
 import { IngestController } from './ingest.controller';
 import { TelemetryController } from './telemetry.controller';
@@ -18,6 +19,7 @@ import { TelemetryService } from './telemetry.service';
     DevicesModule,
     AlertsModule,
     RealtimeModule,
+    RoomsModule,
   ],
   controllers: [IngestController, TelemetryController],
   /*

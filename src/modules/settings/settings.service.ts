@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SystemSetting } from '../../database/entities/system-setting.entity';
 import type { StatusThresholds } from '../../helpers/boiler-status.helper';
+import type { RoomThresholds } from '../../helpers/room-reading.helper';
 import type { UpdateSettingsDto } from './dto/update-settings.dto';
 
 /**
@@ -59,6 +60,12 @@ export class SettingsService {
     };
   }
 
+  /** Xona holatini baholash uchun chegaralar. */
+  async roomThresholds(): Promise<RoomThresholds> {
+    const settings = await this.get();
+    return { minC: settings.roomMinC, normC: settings.roomNormC };
+  }
+
   async update(dto: UpdateSettingsDto): Promise<SystemSetting> {
     const current = await this.get();
 
@@ -81,6 +88,9 @@ export class SettingsService {
       'minDeltaC',
       'offlineAfterMinutes',
       'normTemperature',
+      'roomMinC',
+      'roomNormC',
+      'roomSampleMinutes',
       'retentionDays',
       'seasonLabel',
     ];
@@ -123,6 +133,10 @@ export class SettingsService {
       minDeltaC: 3,
       offlineAfterMinutes: boiler?.offlineAfterMinutes ?? 15,
       normTemperature: boiler?.normTemperature ?? 60,
+      // ⚠️ Buyurtmachi talabi: me'yor 25 °C, eng past 15 °C.
+      roomMinC: 15,
+      roomNormC: 25,
+      roomSampleMinutes: 10,
       retentionDays: telemetry?.retentionDays ?? 90,
       seasonLabel: null,
     });

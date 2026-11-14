@@ -6,6 +6,7 @@ import {
 } from '../../common/constants/enums';
 import { BaseEntity } from './base.entity';
 import { Boiler } from './boiler.entity';
+import { Room } from './room.entity';
 import { User } from './user.entity';
 import { numericTransformer } from './column-transformers';
 
@@ -29,6 +30,23 @@ export class Alert extends BaseEntity {
   @ManyToOne(() => Boiler, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'boiler_id' })
   boiler!: Boiler;
+
+  /**
+   * XONA — faqat xona ogohlantirishlarida (`room_cold`).
+   *
+   * ⚠️⚠️ `null` — KOTYOL ogohlantirishi. Ikki to'plam ALOHIDA
+   * yashaydi: kotyol ogohlantirishlari bir-birini almashtiradi (bitta
+   * kotyolda bitta muammo), xonalarniki esa har xonada mustaqil.
+   * Bazada CHECK (`room_cold` ⇔ `room_id` bor) va ikkita qisman
+   * yagona indeks shuni qo'riqlaydi.
+   */
+  @Index('IDX_alerts_room_id')
+  @Column({ type: 'uuid', name: 'room_id', nullable: true })
+  roomId!: string | null;
+
+  @ManyToOne(() => Room, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'room_id' })
+  room!: Room | null;
 
   @Column({ type: 'enum', enum: AlertType })
   type!: AlertType;
