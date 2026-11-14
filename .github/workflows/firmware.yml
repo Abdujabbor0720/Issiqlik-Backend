@@ -1,0 +1,125 @@
+# PROSHIVKANI GITHUB YIG'ADI.
+#
+# ⚠️⚠️ NIMA UCHUN. Proshivkani har bir montajchi o'z kompyuterida
+# yig'sa, ularda turli PlatformIO va toolchain versiyalari bo'ladi va
+# natija ham turlicha chiqadi. Bu yerda esa `platformio.ini` dagi
+# qotirilgan versiyalar bilan BIR XIL fayl yig'iladi: kim yuklab olsa
+# ham, aynan o'sha baytlar.
+#
+# ⚠️ Montajchiga PlatformIO ham, Python ham kerak emas — u Actions
+# sahifasidan tayyor `.bin` ni yuklab oladi.
+
+name: Proshivka (ESP32)
+
+on:
+  push:
+    branches: [main]
+    # ⚠️ Faqat proshivka o'zgarganda ishlaydi: backend kodi
+    #    o'zgarganda har safar 5 daqiqa yig'ish behuda bo'lardi.
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/firmware.yml'
+  # Tugma bilan qo'lda ishga tushirish uchun.
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # ⚠️ Versiya QOTIRILGAN: PlatformIO eng yangi Python bilan
+          #    har doim ham ishlamaydi va "latest" bir kuni jimgina
+          #    yig'ishni buzardi.
+          python-version: '3.12'
+
+      # ⚠️ ESP32 toolchain ~400 MB. Keshsiz har yig'ish 5+ daqiqa
+      #    ketardi; kesh bilan ikkinchi marta ~1 daqiqa.
+      - name: Keshni tiklash
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: PlatformIO
+        run: pip install --upgrade platformio
+
+      # ⚠️ `secrets.h` git'ga qo'shilmaydi (ichida Wi-Fi paroli va
+      #    token bo'lishi mumkin), lekin `main.cpp` uni `#include`
+      #    qiladi — ya'ni usiz yig'ish umuman boshlanmaydi.
+      #
+      # ⚠️⚠️ `API_TOKEN` BO'SH QOLADI va bu ONGLI: tizimda umumiy
+      #    token o'chiq, har bir plataga USB orqali SHAXSIY token
+      #    yoziladi (`T<token>`). Bu yerga token yozilsa, u ommaviy
+      #    yig'ish jurnalida va `.bin` ichida qolardi.
+      - name: secrets.h (bo'sh token bilan)
+        run: cp firmware/include/secrets.example.h firmware/include/secrets.h
+
+      - name: Yig'ish
+        run: pio run -d firmware
+
+      - name: Versiyani o'qish
+        id: fw
+        run: |
+          VER=$(grep -oP '#define FW_VERSION\s+"\K[^"]+' firmware/include/config.h)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Versiya: $VER"
+
+      # ⚠️⚠️ SERVER QANDAY TEKSHIRSA, SHU YERDA HAM TEKSHIRILADI.
+      #
+      # Busiz yaroqsiz `.bin` faqat kabinetga yuklashda yoki eng
+      # yomoni DALADA, qurilma uni rad etganda bilinardi. Bu yerda
+      # esa yig'ish o'sha zahoti yiqiladi va sabab aniq yoziladi.
+      - name: Tekshirish (server qoidalari bilan AYNI)
+        id: check
+        run: |
+          set -euo pipefail
+          BIN=firmware/.pio/build/esp32dev/firmware.bin
+          VER='${{ steps.fw.outputs.version }}'
+
+          test -f "$BIN" || { echo "XATO: $BIN yo'q"; exit 1; }
+
+          # 1) ESP32 obrazi: birinchi bayt 0xE9
+          MAGIC=$(head -c 1 "$BIN" | xxd -p)
+          [ "$MAGIC" = "e9" ] || { echo "XATO: birinchi bayt 0x$MAGIC, 0xE9 bo'lishi kerak"; exit 1; }
+
+          # 2) OTA bo'limiga sig'adimi (min_spiffs: 1 966 080 bayt)
+          SIZE=$(stat -c%s "$BIN")
+          [ "$SIZE" -le 1966080 ] || { echo "XATO: $SIZE bayt, chegara 1966080"; exit 1; }
+
+          # 3) Versiya belgisi ichida bormi va mos keladimi
+          grep -aq "XONOBOD_FW_VERSION=$VER;" "$BIN" \
+            || { echo "XATO: ichida 'XONOBOD_FW_VERSION=$VER;' belgisi yo'q"; exit 1; }
+
+          SHA=$(sha256sum "$BIN" | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Proshivka v$VER"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Hajm | $SIZE bayt |"
+            echo "| SHA-256 | \`$SHA\` |"
+            echo "| Server | issiqlik-api.yaxshihayot.uz |"
+            echo ""
+            echo "Server tekshiruvlaridan o'tdi: 0xE9, hajm, versiya belgisi."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Yuklash uchun qo'yish
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-v${{ steps.fw.outputs.version }}
+          path: firmware/.pio/build/esp32dev/firmware.bin
+          # ⚠️ Artefakt 90 kun turadi va uni yuklab olish uchun
+          #    GitHub'ga kirgan bo'lish kerak. Doimiy, hammaga ochiq
+          #    havola kerak bo'lsa, shu faylni GitHub Releases ga
+          #    qo'lda biriktirasiz.
+          retention-days: 90
+          if-no-files-found: error
