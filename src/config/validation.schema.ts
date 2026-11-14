@@ -7,6 +7,20 @@ import * as Joi from 'joi';
  * ma'lumot yozilayotgan paytda chiqadi. Bu yerda esa u `npm start` ning
  * birinchi soniyasida, aniq maydon nomi bilan chiqadi.
  */
+/**
+ * O'RIN EGALLOVCHI NAMUNASI — `<...>` ko'rinishidagi qiymat.
+ *
+ * ⚠️ `.env.example` ommaviy repozitoriyada turadi va unda ataylab
+ * ishlamaydigan qiymatlar yoziladi (`<openssl-rand-base64-48>`).
+ * Ular uzunlik tekshiruvidan o'tib ketishi mumkin, shuning uchun
+ * SHAKLI bo'yicha ham rad etiladi.
+ */
+const PLACEHOLDER = /<[^>]*>/;
+
+const PLACEHOLDER_MESSAGE =
+  'Qiymat .env.example dagi o‘rin egallovchi bo‘lib qolgan. ' +
+  'Haqiqiy qiymat yozing: openssl rand -base64 48';
+
 export const validationSchema = Joi.object({
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
@@ -23,19 +37,52 @@ export const validationSchema = Joi.object({
   DB_LOGGING: Joi.boolean().default(false),
   DB_SSL: Joi.boolean().default(false),
 
-  // ⚠️ 16 belgidan qisqa sirni qabul qilmaymiz: `secret` kabi qiymat bilan
-  // imzolangan token amalda imzolanmagan tokenga teng.
-  JWT_ACCESS_SECRET: Joi.string().min(16).required(),
+  /*
+   * ⚠️⚠️ 32 belgidan qisqa sirni qabul qilmaymiz: `secret` kabi qiymat
+   * bilan imzolangan token amalda imzolanmagan tokenga teng.
+   *
+   * ⚠️⚠️ O'RIN EGALLOVCHI QIYMAT ESA UMUMAN O'TMAYDI (`PLACEHOLDER`).
+   * Sabab: `.env.example` ommaviy repozitoriyada turadi va unda
+   * `<openssl-rand-base64-48>` kabi qiymatlar bor. Ular 24 belgi —
+   * ya'ni uzunlik tekshiruvidan BEMALOL o'tardi. Kimdir faylni
+   * serverga shunchaki nusxalab qo'ysa, tizim OMMAVIY MA'LUM sir
+   * bilan ishga tushardi va repozitoriyani o'qigan har kim
+   * administrator tokenini soxtalashtira olardi.
+   *
+   * Bunday xatoni ishlab chiqarishda topib bo'lmaydi — u hech qanday
+   * belgi bermaydi. Shuning uchun u ISHGA TUSHISHDA to'xtatiladi.
+   */
+  JWT_ACCESS_SECRET: Joi.string()
+    .min(32)
+    .pattern(PLACEHOLDER, { invert: true })
+    .required()
+    .messages({
+      'string.min': 'JWT_ACCESS_SECRET kamida 32 belgi bo‘lishi kerak',
+      'string.pattern.invert.base': PLACEHOLDER_MESSAGE,
+    }),
   JWT_ACCESS_TTL: Joi.string().default('30m'),
-  JWT_REFRESH_SECRET: Joi.string().min(16).required(),
+  JWT_REFRESH_SECRET: Joi.string()
+    .min(32)
+    .pattern(PLACEHOLDER, { invert: true })
+    .required()
+    .messages({
+      'string.min': 'JWT_REFRESH_SECRET kamida 32 belgi bo‘lishi kerak',
+      'string.pattern.invert.base': PLACEHOLDER_MESSAGE,
+    }),
   JWT_REFRESH_TTL: Joi.string().default('30d'),
 
   // ───────── Birinchi superadmin ─────────
   // Bo'sh bazada bitta `super_admin` shu qiymatlardan yaratiladi.
   ADMIN_LOGIN: Joi.string().allow('').default(''),
-  ADMIN_PASSWORD: Joi.string().allow('').min(8).default('').messages({
-    'string.min': 'ADMIN_PASSWORD kamida 8 belgi bo‘lishi kerak',
-  }),
+  ADMIN_PASSWORD: Joi.string()
+    .allow('')
+    .min(8)
+    // ⚠️ `<superadmin-paroli>` bilan superadmin yaratilib qolmasin.
+    .pattern(PLACEHOLDER, { invert: true })
+    .default('')
+    .messages({
+      'string.min': 'ADMIN_PASSWORD kamida 8 belgi bo‘lishi kerak',
+    }),
   ADMIN_FULL_NAME: Joi.string().allow('').default('Tizim administratori'),
 
   // ───────── Kotyol holati chegaralari (boshlang'ich) ─────────
@@ -55,7 +102,12 @@ export const validationSchema = Joi.object({
    * beradi. `allow(...)` orqali bo'sh qiymatga ruxsat berilgan —
    * aks holda mexanizmni o'chirib qo'yish imkoni bo'lmasdi.
    */
-  DEVICE_SHARED_TOKEN: Joi.string().allow('').min(24).default(''),
+  DEVICE_SHARED_TOKEN: Joi.string()
+    .allow('')
+    .min(24)
+    .pattern(PLACEHOLDER, { invert: true })
+    .default('')
+    .messages({ 'string.pattern.invert.base': PLACEHOLDER_MESSAGE }),
 
   /*
    * ⚠️ `.bin` fayllar papkasi. Sukut `./storage/firmware` — loyiha

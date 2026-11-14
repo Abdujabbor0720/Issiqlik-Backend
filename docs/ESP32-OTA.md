@@ -22,19 +22,64 @@ Bu uchtasi bajarilmasa, **birorta qurilma ulanmaydi**:
 > emas va butun park bir zumda uziladi. Kerak bo'lsa, avval proshivkaga
 > Cloudflare ildizini qo'shib, parkni yangilash kerak.
 
+### Ikki domen — qaysi biri nima uchun
+
+| Domen | Nima | Kim ishlatadi |
+|---|---|---|
+| `issiqlik.yaxshihayot.uz` | kabinet (statik React) | odamlar, brauzerdan |
+| `issiqlik-api.yaxshihayot.uz` | API + WebSocket + OTA | ESP32 qurilmalari **va** kabinet |
+
+⚠️⚠️ **Qurilmalar FAQAT `issiqlik-api.yaxshihayot.uz` bilan gaplashadi.**
+Bu nom proshivkaga qotirib yozilgan (`firmware/include/config.h` dagi
+`SERVER_HOST`) va `.env` dagi `PUBLIC_BASE_URL` bilan **aynan bir xil**
+bo'lishi shart. Farq qilsa, OTA tekshiruvi `{"update":false}` qaytaradi
+va server jurnaliga sabab yoziladi.
+
+⚠️ Sertifikat **har ikkala** nom uchun alohida olinadi:
+`certbot --nginx -d issiqlik.yaxshihayot.uz -d issiqlik-api.yaxshihayot.uz`
+
 ### nginx namunasi
 
 ```nginx
+# ───────── Kabinet (statik fayllar) ─────────
 server {
     listen 443 ssl http2;
-    server_name issiqlik.andijon.uz;
+    server_name issiqlik.yaxshihayot.uz;
 
-    ssl_certificate     /etc/letsencrypt/live/issiqlik.andijon.uz/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/issiqlik.andijon.uz/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/issiqlik.yaxshihayot.uz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/issiqlik.yaxshihayot.uz/privkey.pem;
 
-    # ⚠️ Proshivka faylini nginx SIQMASLIGI kerak: Content-Length
-    #    aynan `size` ga teng bo'lishi shart.
+    root /var/www/issiqlik;   # `npm run build` natijasi: dist/
+    index index.html;
+
+    # ⚠️ SPA: brauzerdagi yo'llar (/boilers/<id>) serverda fayl emas.
+    #    Busiz sahifani yangilaganda 404 chiqardi.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ⚠️ index.html KESHLANMAYDI: aks holda yangi reliz chiqqanda
+    #    brauzer eski fayl nomlarini so'rab, oq ekran ko'rsatardi.
+    location = /index.html {
+        add_header Cache-Control "no-store";
+    }
+}
+
+# ───────── API + OTA (qurilmalar shu yerga keladi) ─────────
+server {
+    listen 443 ssl http2;
+    server_name issiqlik-api.yaxshihayot.uz;
+
+    ssl_certificate     /etc/letsencrypt/live/issiqlik-api.yaxshihayot.uz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/issiqlik-api.yaxshihayot.uz/privkey.pem;
+
+    # ⚠️⚠️ Proshivka faylini nginx SIQMASLIGI kerak: Content-Length
+    #    aynan `size` ga teng bo'lishi shart, aks holda qurilma
+    #    HAR BIR yangilanishni "hajm mos emas" deb rad etadi.
     gzip off;
+
+    # ⚠️ Proshivka 1.9 MB; yuklash uchun chegara kengaytiriladi.
+    client_max_body_size 4m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -45,10 +90,24 @@ server {
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # ⚠️ WebSocket (jonli yangilanish) uchun.
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
         # ⚠️ 1.9 MB fayl sekin kanalda 20 soniyadan ko'p ketadi.
         proxy_read_timeout 120s;
         proxy_buffering    off;
     }
+}
+
+# ⚠️ HTTP -> HTTPS. Qurilma redirect'ga ERGASHMAYDI, lekin u baribir
+#    to'g'ridan-to'g'ri https:// ga murojaat qiladi -- bu blok faqat
+#    brauzerdan kirgan odam uchun.
+server {
+    listen 80;
+    server_name issiqlik.yaxshihayot.uz issiqlik-api.yaxshihayot.uz;
+    return 301 https://$host$request_uri;
 }
 ```
 
@@ -290,7 +349,7 @@ POST /ota/index.php?a=report
 
 ```json
 {"update":true,"version":"2.1.0",
- "url":"https://issiqlik.andijon.uz/ota/index.php?a=download&v=2.1.0",
+ "url":"https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=download&v=2.1.0",
  "sha256":"<64 kichik hex>","size":1146012}
 ```
 
@@ -308,15 +367,15 @@ DEV=esp32-f42dc987e788
 H=(-H "X-Device-Token: $TOKEN" -H "X-Device-Id: $DEV" -H "X-Firmware-Version: 2.1.0")
 
 # 201 bo'lishi kerak (noma'lum maydon RAD ETILMAYDI)
-curl -i -X POST https://issiqlik.andijon.uz/index.php/api/integrations/telemetry \
+curl -i -X POST https://issiqlik-api.yaxshihayot.uz/index.php/api/integrations/telemetry \
   -H "Content-Type: application/json" "${H[@]}" \
   -d '{"device_id":"'$DEV'","temperature_c":60.5,"probe":"outlet","extra":1}'
 
 # {"update":false} yoki {"update":true,...}
-curl -s "https://issiqlik.andijon.uz/ota/index.php?a=check&device_id=$DEV&version=2.1.0" "${H[@]}"
+curl -s "https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=check&device_id=$DEV&version=2.1.0" "${H[@]}"
 
 # Content-Length = size, chunked va gzip YO'Q
-curl -sI "https://issiqlik.andijon.uz/ota/index.php?a=download&v=2.1.0" "${H[@]}"
+curl -sI "https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=download&v=2.1.0" "${H[@]}"
 ```
 
 Kutilgan natijalar: tokensiz → **401**; begona `device_id` → **403**;

@@ -13,7 +13,7 @@
 //
 // DIQQAT: faqat HTTPS va faqat Let's Encrypt sertifikati (root_ca.h).
 // Cloudflare yoki boshqa CA orqali o'tkazilsa, qurilmalar ULANMAYDI.
-#define SERVER_HOST     "issiqlik.andijon.uz"
+#define SERVER_HOST     "issiqlik-api.yaxshihayot.uz"
 
 // Yo'llar AYNI qoldirildi: ular serverda ham, bu yerda ham qotirilgan.
 // `/index.php/` bo'lagi tarixiy (PHP hostingi izi), lekin server uni ham,
