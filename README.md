@@ -70,8 +70,15 @@ Natija:
 | `http://localhost:3000/api/data` | **ESP32 endpoint** |
 | `ws://localhost:3000/realtime` | Jonli yangilanish (Socket.IO) |
 
-**Birinchi kirish:** `Issqilik2026` / `kotyol2026`
-**Demo operator:** `operator.jalaquduq` / `operator2026` (faqat bitta tuman)
+**Birinchi kirish:** `.env` dagi `ADMIN_LOGIN` va `ADMIN_PASSWORD`.
+Ular berilmasa, hisob umuman yaratilmaydi (`bootstrap.service.ts`).
+
+> ⚠️ Haqiqiy parolni bu faylga yozmang: README ommaviy
+> repozitoriyada turadi va u yerdagi parol bilan tizimga kirish
+> mumkin bo'lardi.
+
+**Demo operator** (faqat `npm run seed` bilan, demo bazada):
+`operator.jalaquduq` / `operator2026`
 
 ---
 

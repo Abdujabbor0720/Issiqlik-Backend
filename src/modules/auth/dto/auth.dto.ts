@@ -11,7 +11,11 @@ export class LoginDto {
   @MaxLength(64)
   login!: string;
 
-  @ApiProperty({ example: 'kotyol2026' })
+  /*
+   * ⚠️ Swagger misoli HAQIQIY parol bo'lmasligi kerak: u ommaviy
+   *    repozitoriyada ham, /docs sahifasida ham ko'rinadi.
+   */
+  @ApiProperty({ example: '••••••••' })
   @IsString()
   @IsNotEmpty({ message: 'Parol kiritilmagan' })
   @MaxLength(128)

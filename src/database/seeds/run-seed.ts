@@ -149,15 +149,33 @@ async function main(): Promise<void> {
 
   // ─────────── 3. Superadmin ───────────
   const adminLogin = process.env.ADMIN_LOGIN || 'Issqilik2026';
+  /*
+   * ⚠️ Parol YO'Q bo'lsa — seed TO'XTAYDI. Sukutdagi qiymat
+   *    berilsa, u ommaviy kodda ko'rinib, hamma biladigan
+   *    parolli superadmin paydo bo'lardi.
+   */
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword) {
+    throw new Error(
+      '.env da ADMIN_PASSWORD berilmagan — superadmin yaratilmadi. ' +
+        'Parolni .env ga yozing (qotirilgan zaxira qiymat ataylab yo‘q).',
+    );
+  }
   const adminExists = await users.findOne({ where: { login: adminLogin } });
   if (!adminExists) {
     await users.save(
       users.create({
         login: adminLogin,
-        passwordHash: await bcrypt.hash(
-          process.env.ADMIN_PASSWORD || 'kotyol2026',
-          10,
-        ),
+        /*
+         * ⚠️⚠️ QOTIRILGAN ZAXIRA PAROL YO'Q va bo'lmasligi ham kerak.
+         *
+         * Ilgari bu yerda qotirilgan zaxira parol turardi. U
+         * ommaviy repozitoriyada ko'rinib turadi, ya'ni `ADMIN_PASSWORD`
+         * ni berishni unutgan odam JIMGINA hamma biladigan parol bilan
+         * superadmin yaratib qo'yardi — va buni hech narsa aytmasdi.
+         * Endi seed yuqorida to'xtaydi (`assertAdminPassword`).
+         */
+        passwordHash: await bcrypt.hash(adminPassword, 10),
         fullName: process.env.ADMIN_FULL_NAME || 'Tizim administratori',
         role: UserRole.SUPER_ADMIN,
         isActive: true,
