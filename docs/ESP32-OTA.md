@@ -126,9 +126,20 @@ Panel maydonlari (Issiqlik-Backend uchun):
 | **Root directory** | **bo'sh qoldiriladi** — backend repozitoriya ILDIZIDA, `server/` papkasida emas |
 | Service name | `issiqlik-backend` |
 | Service type | Node.js (yoki Auto-detect — `package.json` ildizda) |
-| **Build command** | `npm ci && npm run build` |
+| **Build command** | `npm ci --include=dev && npm run build` |
 | **Start command** | `npm run start:prod` |
 | Port | `3000` |
+
+⚠️⚠️ **`--include=dev` SHART.** Panel `.env` dagi `NODE_ENV=production`
+ni build muhitiga ham beradi, npm esa buni ko'rib `omit=dev` qo'yadi va
+devDependencies'ni UMUMAN o'rnatmaydi. `@nestjs/cli` (ya'ni `nest`
+buyrug'i) va `typescript` o'sha yerda — natijada build
+`sh: 1: nest: not found` bilan yiqiladi. `--include=dev` shu qoidani
+bekor qiladi.
+
+⚠️ Ishga tushirish bosqichiga bu TEGMAYDI: `typeorm`, `dotenv`, `pg`
+va `reflect-metadata` `dependencies` da, ya'ni migratsiya ham, ilova
+ham devDependencies'siz ishlaydi.
 
 ⚠️ **Migratsiya alohida buyruq sifatida yozilmaydi.** `npm` `prestart:prod`
 skriptini `start:prod` dan OLDIN o'zi ishga tushiradi va u
