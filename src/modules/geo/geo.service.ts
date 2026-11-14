@@ -1,0 +1,310 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { BoilerStatus, UserRole } from '../../common/constants/enums';
+import type { AuthUser } from '../../common/decorators/current-user.decorator';
+import { Boiler } from '../../database/entities/boiler.entity';
+import { District } from '../../database/entities/district.entity';
+import { Region } from '../../database/entities/region.entity';
+import { applyDistrictScope } from '../../helpers/scope.helper';
+import type {
+  BoilerPoint,
+  DistrictGeoJson,
+  DistrictStats,
+} from './dto/geo.dto';
+
+/** Agregat so'rovidan keladigan xom qator (hammasi satr bo'lib keladi). */
+interface StatRow {
+  districtId: string;
+  total: string;
+  boilerUnits: string | null;
+  active: string;
+  medium: string;
+  inactive: string;
+  offline: string;
+  avgTemperature: string | null;
+}
+
+@Injectable()
+export class GeoService {
+  constructor(
+    @InjectRepository(Region) private readonly regions: Repository<Region>,
+    @InjectRepository(District)
+    private readonly districts: Repository<District>,
+    @InjectRepository(Boiler) private readonly boilers: Repository<Boiler>,
+  ) {}
+
+  async regionList(): Promise<Region[]> {
+    return this.regions.find({ order: { name: 'ASC' } });
+  }
+
+  /** Tumanlar ro'yxati — geometriyasiz (filtr va tanlov uchun). */
+  async districtList(
+    user?: AuthUser,
+  ): Promise<
+    Array<Pick<District, 'id' | 'code' | 'name' | 'shortName' | 'kind'>>
+  > {
+    const qb = this.districts
+      .createQueryBuilder('district')
+      .select([
+        'district.id AS id',
+        'district.code AS code',
+        'district.name AS name',
+        'district.short_name AS "shortName"',
+        'district.kind AS kind',
+      ])
+      .orderBy('district.name', 'ASC');
+
+    applyDistrictScope(qb, user, 'district.id');
+    return qb.getRawMany();
+  }
+
+  /**
+   * XARITA UCHUN GeoJSON — chegaralar + har tumanning raqamlari.
+   *
+   * ⚠️⚠️ Geometriya va statistika BITTA javobda qaytadi. Ajratilsa,
+   * frontend ikkita so'rov yuborib, natijani ID bo'yicha qo'lda
+   * birlashtirardi: bitta tuman statistikaga tushmay qolsa, xaritada
+   * «0 kotyol» bo'lib ko'rinardi va xato manbai topilmasdi.
+   *
+   * ⚠️ Statistika AGREGAT so'rov bilan, tumanlar bo'ylab sikl bilan
+   * EMAS: 16 tuman uchun 16 ta so'rov — bu «N+1» va u sahifa ochilish
+   * vaqtini o'n baravarga uzaytirardi.
+   */
+  async mapGeoJson(
+    districtIds: string[] | undefined,
+    user?: AuthUser,
+  ): Promise<DistrictGeoJson> {
+    const region = await this.regions.findOne({ where: { code: 'andijon' } });
+
+    const districtQb = this.districts
+      .createQueryBuilder('district')
+      .orderBy('district.name', 'ASC');
+
+    applyDistrictScope(districtQb, user, 'district.id');
+    if (districtIds?.length) {
+      districtQb.andWhere('district.id IN (:...districtIds)', { districtIds });
+    }
+    const districts = await districtQb.getMany();
+
+    const statsMap = await this.statsByDistrict(user);
+
+    const features = districts.map((district) => {
+      const stats = this.buildStats(district, statsMap.get(district.id));
+      return {
+        type: 'Feature' as const,
+        properties: stats,
+        geometry: district.geometry,
+      };
+    });
+
+    return {
+      type: 'FeatureCollection',
+      /*
+       * ⚠️ Chegaralovchi to'rtburchak TANLOVGA qarab emas, VILOYATNIKI.
+       * Tanlangan tumanga moslansa, filtr har o'zgarganda xarita
+       * sakrab-sakrab kattalashardi va foydalanuvchi mo'ljalni
+       * yo'qotardi. Tanlov rangni va raqamni o'zgartiradi, MASSHTABNI emas.
+       */
+      bbox: region?.bbox ?? null,
+      features,
+    };
+  }
+
+  /** Bitta tuman — kesim sahifasi uchun. */
+  async districtDetail(
+    id: string,
+    user?: AuthUser,
+  ): Promise<{ district: District; stats: DistrictStats }> {
+    const district = await this.districts.findOne({ where: { id } });
+    if (!district) throw new NotFoundException('Tuman topilmadi');
+
+    if (
+      user?.districtId &&
+      user.role === UserRole.OPERATOR &&
+      user.districtId !== id
+    ) {
+      throw new NotFoundException('Tuman topilmadi');
+    }
+
+    const statsMap = await this.statsByDistrict(user, [id]);
+    return { district, stats: this.buildStats(district, statsMap.get(id)) };
+  }
+
+  /**
+   * XARITADAGI NUQTALAR — koordinatasi bor kotyollar.
+   *
+   * ⚠️ Koordinatasi YO'Q kotyol bu ro'yxatga tushmaydi, lekin tuman
+   * SANOG'IDA baribir bor. Aks holda «16 ta kotyol bor-u, xaritada
+   * 9 tasi» degan farq paydo bo'lardi va uni hech kim tushuntira olmasdi.
+   * Farq soni kesim sahifasida alohida ko'rsatiladi.
+   */
+  async boilerPoints(
+    districtIds: string[] | undefined,
+    user?: AuthUser,
+  ): Promise<BoilerPoint[]> {
+    const qb = this.boilers
+      .createQueryBuilder('boiler')
+      .innerJoin('boiler.district', 'district')
+      .leftJoin('boiler.organization', 'organization')
+      .select([
+        'boiler.id AS id',
+        'boiler.lot_number AS "lotNumber"',
+        'organization.name AS "organizationName"',
+        'boiler.district_id AS "districtId"',
+        'district.name AS "districtName"',
+        'boiler.lat AS lat',
+        'boiler.lng AS lng',
+        'boiler.current_status AS status',
+        'boiler.last_temperature AS temperature',
+        'boiler.boiler_count AS "boilerCount"',
+        'boiler.last_reading_at AS "lastReadingAt"',
+      ])
+      .where('boiler.is_archived = false')
+      .andWhere('boiler.lat IS NOT NULL')
+      .andWhere('boiler.lng IS NOT NULL');
+
+    applyDistrictScope(qb, user, 'boiler.district_id');
+    if (districtIds?.length) {
+      qb.andWhere('boiler.district_id IN (:...districtIds)', { districtIds });
+    }
+
+    const rows = await qb.getRawMany<Record<string, unknown>>();
+    return rows.map((row) => ({
+      id: String(row.id),
+      lotNumber: String(row.lotNumber),
+      organizationName: (row.organizationName as string) ?? null,
+      districtId: String(row.districtId),
+      districtName: String(row.districtName),
+      lat: Number(row.lat),
+      lng: Number(row.lng),
+      status: String(row.status),
+      temperature:
+        row.temperature === null || row.temperature === undefined
+          ? null
+          : Number(row.temperature),
+      boilerCount: Number(row.boilerCount ?? 1),
+      lastReadingAt: row.lastReadingAt
+        ? new Date(row.lastReadingAt as string).toISOString()
+        : null,
+    }));
+  }
+
+  // ───────────────── ichki ─────────────────
+
+  /**
+   * Tumanlar bo'yicha agregat — BITTA so'rov.
+   *
+   * ⚠️ `FILTER (WHERE ...)` ishlatiladi, `CASE WHEN` emas: PostgreSQL da
+   * ikkalasi ham ishlaydi, lekin `FILTER` niyatni ochiq ko'rsatadi va
+   * «shu holatdagi qatorlarni sana» degan jumla SQL da aynan shunday
+   * o'qiladi.
+   */
+  private async statsByDistrict(
+    user?: AuthUser,
+    onlyIds?: string[],
+  ): Promise<Map<string, StatRow>> {
+    const qb = this.boilers
+      .createQueryBuilder('boiler')
+      .select('boiler.district_id', 'districtId')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect('COALESCE(SUM(boiler.boiler_count), 0)', 'boilerUnits')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE boiler.current_status = '${BoilerStatus.ACTIVE}')`,
+        'active',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE boiler.current_status = '${BoilerStatus.MEDIUM}')`,
+        'medium',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE boiler.current_status = '${BoilerStatus.INACTIVE}')`,
+        'inactive',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE boiler.current_status = '${BoilerStatus.OFFLINE}')`,
+        'offline',
+      )
+      /*
+       * ⚠️ O'rtacha harorat FAQAT o'lchovi bor kotyollardan. `COALESCE`
+       * bilan nolga aylantirilsa, aloqasi yo'q o'nta kotyol butun
+       * tumanning o'rtachasini 0 ga tortib tushirardi — ekranda esa
+       * «tuman sovuq» bo'lib ko'rinardi.
+       */
+      .addSelect('AVG(boiler.last_temperature)', 'avgTemperature')
+      .where('boiler.is_archived = false')
+      .groupBy('boiler.district_id');
+
+    applyDistrictScope(qb, user, 'boiler.district_id');
+    if (onlyIds?.length) {
+      qb.andWhere('boiler.district_id IN (:...onlyIds)', { onlyIds });
+    }
+
+    const rows = await qb.getRawMany<StatRow>();
+    return new Map(rows.map((row) => [row.districtId, row]));
+  }
+
+  private buildStats(district: District, row?: StatRow): DistrictStats {
+    const total = Number(row?.total ?? 0);
+    const active = Number(row?.active ?? 0);
+    const medium = Number(row?.medium ?? 0);
+    const inactive = Number(row?.inactive ?? 0);
+    const offline = Number(row?.offline ?? 0);
+    const working = active + medium;
+
+    return {
+      districtId: district.id,
+      code: district.code,
+      name: district.name,
+      shortName: district.shortName,
+      kind: district.kind,
+      centerLat: district.centerLat,
+      centerLng: district.centerLng,
+      total,
+      boilerUnits: Number(row?.boilerUnits ?? 0),
+      active,
+      medium,
+      inactive,
+      offline,
+      workingPercent: total > 0 ? Math.round((working / total) * 100) : 0,
+      avgTemperature:
+        row?.avgTemperature === null || row?.avgTemperature === undefined
+          ? null
+          : Math.round(Number(row.avgTemperature) * 10) / 10,
+      dominantStatus: this.dominantStatus({
+        active,
+        medium,
+        inactive,
+        offline,
+      }),
+    };
+  }
+
+  /**
+   * USTUN HOLAT — xaritadagi belgi rangi.
+   *
+   * ⚠️ «Eng ko'p uchragani» EMAS, «eng YOMONI muhim» qoidasi: tumandagi
+   * 20 ta kotyoldan 11 tasi faol, 9 tasi o'chiq bo'lsa, belgi yashil
+   * bo'lsa rahbar muammoni umuman ko'rmasdi. Shuning uchun ishlamayotgan
+   * ulushi sezilarli bo'lsa (≥ 25%), belgi o'shani ko'rsatadi.
+   */
+  private dominantStatus(counts: {
+    active: number;
+    medium: number;
+    inactive: number;
+    offline: number;
+  }): string {
+    const total =
+      counts.active + counts.medium + counts.inactive + counts.offline;
+    if (total === 0) return BoilerStatus.OFFLINE;
+
+    const broken = counts.inactive + counts.offline;
+    if (broken / total >= 0.25) {
+      return counts.offline >= counts.inactive
+        ? BoilerStatus.OFFLINE
+        : BoilerStatus.INACTIVE;
+    }
+    if (counts.medium / total >= 0.35) return BoilerStatus.MEDIUM;
+    return BoilerStatus.ACTIVE;
+  }
+}

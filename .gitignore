@@ -1,0 +1,52 @@
+# Bog'liqliklar
+/node_modules
+/.pnp
+.pnp.js
+
+# Kompilyatsiya
+/dist
+/build
+*.tsbuildinfo
+
+# Muhit — ⚠️ HECH QACHON git'ga tushmaydi (sirlar va baza paroli)
+.env
+.env.local
+.env.*.local
+
+# Jurnal
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test
+/coverage
+/.nyc_output
+
+# IDE
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+.DS_Store
+
+# Vaqtinchalik
+/tmp
+/temp
+
+# Proshivka (.bin) fayllari — IKKILIK va ichida qurilma tokeni bo'lishi mumkin.
+# Git'ga tushsa, token repozitoriya tarixida abadiy qolardi.
+/storage/
+
+# ⚠️⚠️ PROSHIVKA MAXFIY FAYLLARI — hali mavjud bo'lmasa ham ro'yxatda
+# turishi SHART: ular `proshivka.py` ishlatilganda paydo bo'ladi va
+# keyingi `git add .` ularni jimgina commit qilib yuborardi.
+#   secrets.h     — Wi-Fi paroli va umumiy API token
+#   tokenlar.csv  — HAR BIR qurilmaning shaxsiy tokeni
+firmware/include/secrets.h
+firmware/tokenlar.csv
+firmware/.pio
+firmware/__pycache__/

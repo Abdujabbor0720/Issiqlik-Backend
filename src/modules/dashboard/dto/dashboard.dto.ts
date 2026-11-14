@@ -1,0 +1,85 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { IsArray, IsIn, IsOptional, IsUUID } from 'class-validator';
+import { toArray } from '../../../common/dto/transforms';
+
+export const TREND_RANGES = ['24h', '7d', '30d'] as const;
+export type TrendRange = (typeof TREND_RANGES)[number];
+
+export class DashboardQueryDto {
+  @ApiPropertyOptional({ type: [String], description: 'Tanlangan tumanlar' })
+  @Transform(toArray)
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  districtIds?: string[];
+}
+
+export class TrendQueryDto extends DashboardQueryDto {
+  @ApiPropertyOptional({ enum: TREND_RANGES, default: '24h' })
+  @IsIn(TREND_RANGES)
+  @IsOptional()
+  range: TrendRange = '24h';
+}
+
+/**
+ * DASHBOARD KARTALARI.
+ *
+ * ⚠️ `total` — QOZONXONALAR (lotlar) soni, `boilerUnits` esa ulardagi
+ * kotyollar YIG'INDISI. Ikkalasi ham kerak va ular ALOHIDA: bitta
+ * qozonxonada 3 ta kotyol bo'lishi mumkin va «196 ta obyekt» bilan
+ * «412 ta kotyol» butunlay boshqa raqamlar. Bitta maydon bo'lsa,
+ * hisobotdagi raqam hujjatdagi raqam bilan mos kelmasdi.
+ */
+export interface DashboardSummary {
+  total: number;
+  boilerUnits: number;
+  /** `active + medium` — umumiy ishlayotganlar. */
+  working: number;
+  workingPercent: number;
+  active: number;
+  activePercent: number;
+  medium: number;
+  mediumPercent: number;
+  inactive: number;
+  inactivePercent: number;
+  offline: number;
+  offlinePercent: number;
+  avgTemperature: number | null;
+  /** Hujjatdagi me'yor (60 °C) — kartadagi taqqoslash uchun. */
+  normTemperature: number;
+  openAlerts: number;
+  devicesTotal: number;
+  devicesOnline: number;
+  readingsLast24h: number;
+  /** Xaritada ko'rinmaydigan (koordinatasiz) kotyollar soni. */
+  withoutCoordinates: number;
+  /** ESP32 moduli ulanmagan kotyollar soni. */
+  withoutDevice: number;
+  updatedAt: string;
+}
+
+export interface DistrictRow {
+  districtId: string;
+  name: string;
+  shortName: string;
+  total: number;
+  boilerUnits: number;
+  active: number;
+  medium: number;
+  inactive: number;
+  offline: number;
+  workingPercent: number;
+  avgTemperature: number | null;
+}
+
+export interface TrendPoint {
+  t: string;
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+  active: number;
+  medium: number;
+  inactive: number;
+  offline: number;
+}
