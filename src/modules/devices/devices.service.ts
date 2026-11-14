@@ -74,8 +74,15 @@ export class DevicesService {
     }
 
     if (query.search) {
+      /*
+       * ⚠️ `institution_hint` HAM qidiriladi — montajchi plata sozlash
+       * sahifasida yozgan muassasa nomi («12-maktab»). Yuzlab
+       * biriktirilmagan modul orasidan O'Z binosidagisini tuman mas'uli
+       * aynan shu bo'yicha topadi: `esp32-a4cf12…` raqamini u bilmaydi.
+       */
       qb.andWhere(
-        '(device.device_id ILIKE :q OR device.name ILIKE :q OR boiler.lot_number ILIKE :q)',
+        '(device.device_id ILIKE :q OR device.name ILIKE :q ' +
+          'OR device.institution_hint ILIKE :q OR boiler.lot_number ILIKE :q)',
         { q: `%${query.search}%` },
       );
     }
