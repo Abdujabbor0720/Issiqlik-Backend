@@ -49,7 +49,9 @@ server {
     ssl_certificate     /etc/letsencrypt/live/issiqlik.yaxshihayot.uz/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/issiqlik.yaxshihayot.uz/privkey.pem;
 
-    root /var/www/issiqlik;   # `npm run build` natijasi: dist/
+    # ⚠️ Deploy menejeri yoygan papka + `dist/`. `npm run build`
+    #    natijasi aynan shu yerda bo'ladi.
+    root /var/www/issiqlik-kotyol/issiqlik-frontend/dist;
     index index.html;
 
     # ⚠️ SPA: brauzerdagi yo'llar (/boilers/<id>) serverda fayl emas.
