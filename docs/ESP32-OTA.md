@@ -250,6 +250,43 @@ python3 proshivka.py 12-maktab --token
 
 Keyin `tokenlar.csv` dagi tokenni kabinetdagi qurilma kartasiga kiritasiz.
 
+### Ko'p qurilma uchun: avtomatik ro'yxatga olish
+
+⚠️⚠️ Yuzlab plata uchun har biriga qo'lda token yozish amalda
+imkonsiz: montajchi har plata uchun administratorga murojaat qilishi
+kerak bo'lardi va o'rnatish ishi shu yerda to'xtardi.
+
+Shuning uchun proshivkaga BITTA umumiy token qo'yiladi va qurilma
+o'zini serverga **o'zi tanitadi**:
+
+1. `.env` da `DEVICE_SHARED_TOKEN` to'ldiriladi
+2. GitHub repozitoriyasida **Settings → Secrets and variables →
+   Actions** ga AYNI qiymat `DEVICE_SHARED_TOKEN` nomi bilan qo'yiladi
+3. Actions → **Proshivka (ESP32)** → *Run workflow* → yangi `.bin`
+   ichida token bo'ladi (repozitoriyada token KO'RINMAYDI)
+4. Montajchi platani yozadi va Wi-Fi'ni sozlaydi — **tamom**
+
+Qurilma birinchi ulanganda server uni o'zi ro'yxatga oladi va
+o'lchovlarini qabul qila boshlaydi.
+
+⚠️⚠️ **KOTYOLGA BIRIKTIRMAYDI** va xavf aynan shu bilan cheklanadi.
+Token sizib chiqsa, begona odam soxta qurilma yarata oladi — lekin
+biriktirilmagan qurilmaning o'lchovi hech qaysi kotyolning holatini,
+xaritasini yoki hisobotini **o'zgartirmaydi**. Eng yomon natija —
+ro'yxatda keraksiz qator.
+
+⚠️ `DEVICE_AUTO_ENROLL_MAX` (sukut 2000) — parkdagi qurilmalar soni
+chegarasi. Busiz tokenni bilgan odam cheksiz soxta qurilma yaratib,
+jadvalni to'ldirib qo'yardi. Chegaraga yetilganda jurnalga xato
+yoziladi.
+
+⚠️ Avtomatik yaratilgan qurilmada `note` maydoni
+«Avtomatik ro'yxatga olindi (umumiy token)» bo'ladi va `boiler_id`
+bo'sh — kabinetdagi «Biriktirilmagan» filtri bilan topiladi.
+
+Mexanizmni o'chirish: `DEVICE_SHARED_TOKEN` ni bo'shatish. Shunda
+eski xatti-harakat qaytadi (403 + kutish ro'yxati).
+
 ### Umumiy token haqida
 
 Tizim **faqat shaxsiy tokenlar** bilan ishlaydi: `.env` dagi

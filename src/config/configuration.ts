@@ -71,6 +71,17 @@ export interface AppConfig {
      * qurilmalarga ishlaydi — butun viloyatga emas.
      */
     sharedDeviceToken: string;
+    /**
+     * AVTOMATIK RO'YXATGA OLISH CHEGARASI — parkdagi qurilmalar soni.
+     *
+     * ⚠️⚠️ Token sizib chiqqan holat uchun. Busiz uni bilgan odam
+     * cheksiz soxta qurilma yaratib, jadvalni va diskni to'ldirib
+     * qo'yardi. Chegaraga yetilganda yangi qurilma yaratilmaydi va
+     * jurnalga XATO yoziladi.
+     *
+     * ⚠️ `0` — chegarasiz. Faqat ishlab chiqishda ishlatiladi.
+     */
+    autoEnrollMax: number;
   };
 
   /**
@@ -157,6 +168,7 @@ export default (): AppConfig => ({
     retentionDays: parseInt(process.env.TELEMETRY_RETENTION_DAYS ?? '90', 10),
     // ⚠️ Sukut BO'SH — umumiy token o'chiq (yuqoridagi izohga qara).
     sharedDeviceToken: (process.env.DEVICE_SHARED_TOKEN ?? '').trim(),
+    autoEnrollMax: parseInt(process.env.DEVICE_AUTO_ENROLL_MAX ?? '2000', 10),
   },
 
   // ⚠️ Oxiridagi `/` olib tashlanadi: aks holda manzilda `//` chiqardi.

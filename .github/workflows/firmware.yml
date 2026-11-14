@@ -50,16 +50,45 @@ jobs:
       - name: PlatformIO
         run: pip install --upgrade platformio
 
-      # ⚠️ `secrets.h` git'ga qo'shilmaydi (ichida Wi-Fi paroli va
-      #    token bo'lishi mumkin), lekin `main.cpp` uni `#include`
-      #    qiladi — ya'ni usiz yig'ish umuman boshlanmaydi.
+      # ⚠️ `secrets.h` git'ga qo'shilmaydi, lekin `main.cpp` uni
+      #    `#include` qiladi — usiz yig'ish umuman boshlanmaydi.
       #
-      # ⚠️⚠️ `API_TOKEN` BO'SH QOLADI va bu ONGLI: tizimda umumiy
-      #    token o'chiq, har bir plataga USB orqali SHAXSIY token
-      #    yoziladi (`T<token>`). Bu yerga token yozilsa, u ommaviy
-      #    yig'ish jurnalida va `.bin` ichida qolardi.
-      - name: secrets.h (bo'sh token bilan)
-        run: cp firmware/include/secrets.example.h firmware/include/secrets.h
+      # ⚠️⚠️ UMUMIY TOKEN GITHUB SECRETS'DAN OLINADI.
+      #
+      #    Repozitoriyada token YO'Q va yig'ish jurnalida ham
+      #    ko'rinmaydi (GitHub uni `***` bilan yopadi). Lekin u
+      #    `.bin` ICHIGA tushadi — bu mexanizmning mohiyati:
+      #    qurilma o'zini shu token bilan tanitadi va montajchi
+      #    hech narsa yozishi shart emas.
+      #
+      # ⚠️ Secret qo'yilmagan bo'lsa, token BO'SH qoladi va yig'ish
+      #    baribir o'tadi: shunda qurilmalar avtomatik ro'yxatga
+      #    tushmaydi, har biriga qo'lda token yozish kerak bo'ladi.
+      #    Shuning uchun holat yig'ish xulosasida AYTILADI —
+      #    jimgina «token yo'q» holatida qolib ketmaslik uchun.
+      - name: secrets.h
+        env:
+          FW_SHARED_TOKEN: ${{ secrets.DEVICE_SHARED_TOKEN }}
+        run: |
+          set -euo pipefail
+          SRC=firmware/include/secrets.example.h
+          DST=firmware/include/secrets.h
+          cp "$SRC" "$DST"
+
+          if [ -n "${FW_SHARED_TOKEN:-}" ]; then
+            # ⚠️ Token qo'shtirnoq ichida; `|` ajratgich ishlatiladi,
+            #    chunki base64 tokenda `/` bo'lishi mumkin va u `sed`
+            #    ning odatiy `/` ajratgichini buzardi.
+            sed -i "s|#define API_TOKEN     \"\"|#define API_TOKEN     \"$FW_SHARED_TOKEN\"|" "$DST"
+            grep -q "define API_TOKEN     \"\"" "$DST" \
+              && { echo "XATO: token yozilmadi"; exit 1; } || true
+            echo "token=bor" >> "$GITHUB_OUTPUT"
+            echo "Umumiy token qo'shildi (${#FW_SHARED_TOKEN} belgi)"
+          else
+            echo "token=yoq" >> "$GITHUB_OUTPUT"
+            echo "DIQQAT: DEVICE_SHARED_TOKEN secret'i yo'q — token BO'SH"
+          fi
+        id: secrets
 
       - name: Yig'ish
         run: pio run -d firmware
@@ -108,6 +137,11 @@ jobs:
             echo "| Hajm | $SIZE bayt |"
             echo "| SHA-256 | \`$SHA\` |"
             echo "| Server | issiqlik-api.yaxshihayot.uz |"
+            if [ '${{ steps.secrets.outputs.token }}' = 'bor' ]; then
+              echo "| Umumiy token | ichida bor — qurilmalar avtomatik ro'yxatga tushadi |"
+            else
+              echo "| Umumiy token | **YO'Q** — har plataga qo'lda token yozish kerak |"
+            fi
             echo ""
             echo "Server tekshiruvlaridan o'tdi: 0xE9, hajm, versiya belgisi."
           } >> "$GITHUB_STEP_SUMMARY"

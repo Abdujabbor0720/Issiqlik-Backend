@@ -124,6 +124,14 @@ export const validationSchema = Joi.object({
     .uri({ scheme: ['http', 'https'] })
     .default('http://localhost:3000'),
 
+  /*
+   * ⚠️ Avtomatik ro'yxatga olingan qurilmalar soni chegarasi.
+   *    Parkdan sezilarli katta qo'yilsa, chegara ma'nosini
+   *    yo'qotadi; juda kichik qo'yilsa, haqiqiy qurilmalar
+   *    ro'yxatga tusha olmay qoladi.
+   */
+  DEVICE_AUTO_ENROLL_MAX: Joi.number().min(0).max(100000).default(2000),
+
   FIRMWARE_DIR: Joi.string().default('./storage/firmware'),
   FIRMWARE_MAX_CONCURRENT: Joi.number().min(1).max(200).default(10),
 
