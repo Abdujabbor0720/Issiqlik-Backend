@@ -33,6 +33,7 @@
     "db:reset": "npm run schema:drop && npm run migration:run && npm run seed",
     "simulate": "ts-node -r tsconfig-paths/register scripts/simulate-devices.ts",
     "demo:feed": "ts-node -r tsconfig-paths/register scripts/demo-feed.ts",
+    "import:qozonxona": "node dist/scripts/import-qozonxonalar.js",
     "pg:init": "bash scripts/pg-local.sh init",
     "pg:start": "bash scripts/pg-local.sh start",
     "pg:stop": "bash scripts/pg-local.sh stop",

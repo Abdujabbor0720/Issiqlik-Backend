@@ -1,3 +1,4 @@
+import { lotRef } from '../../helpers/boiler-label.helper';
 import {
   BadRequestException,
   Injectable,
@@ -130,9 +131,10 @@ export class BoilersService {
   async prepareNew(dto: CreateBoilerDto, actor: AuthUser): Promise<Boiler> {
     assertDistrictAccess(actor, dto.districtId);
     await this.assertDistrictExists(dto.districtId);
-    await this.assertLotFree(dto.lotNumber);
+    if (dto.lotNumber) await this.assertLotFree(dto.lotNumber);
 
     return this.repo.create({
+      lotNumber: null,
       ...dto,
       firmId: dto.firmId ?? null,
       organizationId: dto.organizationId ?? null,
@@ -165,7 +167,7 @@ export class BoilersService {
       action: AuditAction.CREATE,
       entityName: 'Boiler',
       entityId: saved.id,
-      summary: `Kotyol qo‘shildi: lot ${saved.lotNumber}`,
+      summary: `Kotyol qo‘shildi: ${lotRef(saved.lotNumber)}`,
       after: { lotNumber: saved.lotNumber, boilerCount: saved.boilerCount },
     });
     return this.findOne(saved.id, actor);
@@ -234,7 +236,7 @@ export class BoilersService {
       action: AuditAction.UPDATE,
       entityName: 'Boiler',
       entityId: saved.id,
-      summary: `Kotyol tahrirlandi: lot ${saved.lotNumber}`,
+      summary: `Kotyol tahrirlandi: ${lotRef(saved.lotNumber)}`,
       before,
       after: {
         lotNumber: saved.lotNumber,
@@ -267,7 +269,7 @@ export class BoilersService {
       action: AuditAction.DELETE,
       entityName: 'Boiler',
       entityId: id,
-      summary: `Kotyol arxivlandi: lot ${boiler.lotNumber} — ${reason}`,
+      summary: `Kotyol arxivlandi: ${lotRef(boiler.lotNumber)} — ${reason}`,
     });
     return saved;
   }
@@ -285,7 +287,7 @@ export class BoilersService {
       action: AuditAction.UPDATE,
       entityName: 'Boiler',
       entityId: id,
-      summary: `Kotyol arxivdan qaytarildi: lot ${boiler.lotNumber}`,
+      summary: `Kotyol arxivdan qaytarildi: ${lotRef(boiler.lotNumber)}`,
     });
     return saved;
   }

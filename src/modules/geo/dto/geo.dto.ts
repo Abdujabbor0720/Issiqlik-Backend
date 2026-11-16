@@ -53,7 +53,7 @@ export interface DistrictGeoJson {
 /** Xaritadagi bitta kotyol nuqtasi. */
 export interface BoilerPoint {
   id: string;
-  lotNumber: string;
+  lotNumber: string | null;
   organizationName: string | null;
   districtId: string;
   districtName: string;

@@ -1,3 +1,4 @@
+import { lotRef } from '../../helpers/boiler-label.helper';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -37,7 +38,7 @@ export const MAX_ROOMS_PER_BOILER = 64;
 
 export interface RoomIngestInput {
   boilerId: string;
-  lotNumber: string;
+  lotNumber: string | null;
   samples: RoomSample[];
   recordedAt: Date;
   now: Date;
@@ -103,7 +104,7 @@ export class RoomsService {
 
       if (result.overCap > 0) {
         this.logger.warn(
-          `Lot ${input.lotNumber}: xonalar chegarasi (${MAX_ROOMS_PER_BOILER}) ` +
+          `${lotRef(input.lotNumber)}: xonalar chegarasi (${MAX_ROOMS_PER_BOILER}) ` +
             `to‘ldi — ${result.overCap} ta yangi datchik e‘tiborsiz qoldirildi`,
         );
       }
@@ -220,7 +221,7 @@ export class RoomsService {
       });
     } catch (error) {
       this.logger.warn(
-        `Xona ogohlantirishi yozilmadi (lot ${input.lotNumber}): ` +
+        `Xona ogohlantirishi yozilmadi (${lotRef(input.lotNumber)}): ` +
           (error instanceof Error ? error.message : String(error)),
       );
     }
@@ -443,7 +444,7 @@ export class RoomsService {
       action: AuditAction.UPDATE,
       entityName: 'Room',
       entityId: room.id,
-      summary: `Xona tahrirlandi: lot ${boiler.lotNumber} — ${room.name}`,
+      summary: `Xona tahrirlandi: ${lotRef(boiler.lotNumber)} — ${room.name}`,
       before,
       after: {
         name: room.name,
@@ -478,7 +479,7 @@ export class RoomsService {
       action: AuditAction.DELETE,
       entityName: 'Room',
       entityId: room.id,
-      summary: `Xona o‘chirildi: lot ${room.boiler.lotNumber} — ${room.name}`,
+      summary: `Xona o‘chirildi: ${lotRef(room.boiler.lotNumber)} — ${room.name}`,
       before: { name: room.name, sensorKey: room.sensorKey },
     });
   }
@@ -600,7 +601,7 @@ export class RoomsService {
         roomName: String(item.roomName),
         temperature: Number(item.temperature),
         boilerId: String(item.boilerId),
-        lotNumber: String(item.lotNumber),
+        lotNumber: (item.lotNumber as string | null) ?? null,
         organizationName: (item.organizationName as string | null) ?? null,
         districtName: String(item.districtName),
       })),

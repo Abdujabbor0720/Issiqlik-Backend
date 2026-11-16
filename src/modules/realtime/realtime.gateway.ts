@@ -10,7 +10,7 @@ import type { Server, Socket } from 'socket.io';
 export interface BoilerStatusEvent {
   boilerId: string;
   districtId: string;
-  lotNumber: string;
+  lotNumber: string | null;
   status: string;
   temperature: number | null;
   at: string;
@@ -19,7 +19,7 @@ export interface BoilerStatusEvent {
 export interface AlertEvent {
   alertId: string;
   boilerId: string;
-  lotNumber: string;
+  lotNumber: string | null;
   type: string;
   severity: string;
   message: string;

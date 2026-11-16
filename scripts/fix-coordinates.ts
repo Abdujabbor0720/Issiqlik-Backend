@@ -89,7 +89,7 @@ async function main(): Promise<void> {
     }
     outside.push({
       id: boiler.id,
-      lot: boiler.lotNumber,
+      lot: boiler.lotNumber ?? '(lotsiz)',
       district: district.name,
     });
   }

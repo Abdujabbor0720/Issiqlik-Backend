@@ -1,3 +1,4 @@
+import { lotRef } from '../../helpers/boiler-label.helper';
 import {
   BadRequestException,
   ConflictException,
@@ -316,7 +317,7 @@ export class BoilerSetupService {
       entityName: 'Boiler',
       entityId: boiler.id,
       summary:
-        `Kotyol qo‘shildi: lot ${boiler.lotNumber}` +
+        `Kotyol qo‘shildi: ${lotRef(boiler.lotNumber)}` +
         (device ? ` (modul: ${device.deviceId})` : ''),
       after: { lotNumber: boiler.lotNumber, boilerCount: boiler.boilerCount },
     });
@@ -327,7 +328,7 @@ export class BoilerSetupService {
         action: AuditAction.UPDATE,
         entityName: 'Device',
         entityId: device.id,
-        summary: `Modul kotyolga biriktirildi: ${device.deviceId} → lot ${boiler.lotNumber}`,
+        summary: `Modul kotyolga biriktirildi: ${device.deviceId} → ${lotRef(boiler.lotNumber)}`,
         before: { boilerId: null },
         after: { boilerId: boiler.id },
       });
@@ -337,7 +338,7 @@ export class BoilerSetupService {
         action: AuditAction.CREATE,
         entityName: 'Device',
         entityId: device.id,
-        summary: `ESP32 moduli qo‘shildi: ${device.deviceId} → lot ${boiler.lotNumber}`,
+        summary: `ESP32 moduli qo‘shildi: ${device.deviceId} → ${lotRef(boiler.lotNumber)}`,
       });
     }
   }

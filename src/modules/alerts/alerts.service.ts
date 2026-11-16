@@ -1,3 +1,4 @@
+import { lotRef } from '../../helpers/boiler-label.helper';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -20,7 +21,7 @@ import type { AlertQueryDto } from './dto/alert.dto';
 
 export interface EvaluateInput {
   boilerId: string;
-  lotNumber: string;
+  lotNumber: string | null;
   status: BoilerStatus;
   /** CHIQISH harorati — `null` bo'lsa, chiqish datchigi qiymat bermagan. */
   temperature: number | null;
@@ -139,7 +140,7 @@ export class AlertsService {
    */
   async evaluateRooms(input: {
     boilerId: string;
-    lotNumber: string;
+    lotNumber: string | null;
     minC: number;
     now: Date;
     rooms: Array<{
@@ -183,7 +184,7 @@ export class AlertsService {
       }
 
       const message =
-        `Lot ${input.lotNumber}: «${room.roomName}» sovuq — ` +
+        `${lotRef(input.lotNumber)}: «${room.roomName}» sovuq — ` +
         `${room.temperature.toFixed(1)} °C (eng past ruxsat: ${input.minC} °C)`;
 
       try {
@@ -531,14 +532,14 @@ export class AlertsService {
     switch (type) {
       case AlertType.OFFLINE:
         return input.temperature === null
-          ? `Lot ${input.lotNumber}: qurilmadan signal kelmayapti`
-          : `Lot ${input.lotNumber}: kotyol sovuq (${temp})`;
+          ? `${lotRef(input.lotNumber)}: qurilmadan signal kelmayapti`
+          : `${lotRef(input.lotNumber)}: kotyol sovuq (${temp})`;
       case AlertType.CRITICAL_TEMPERATURE:
-        return `Lot ${input.lotNumber}: kotyol ishlamayapti — ${temp}`;
+        return `${lotRef(input.lotNumber)}: kotyol ishlamayapti — ${temp}`;
       case AlertType.LOW_TEMPERATURE:
-        return `Lot ${input.lotNumber}: harorat me'yordan past — ${temp}`;
+        return `${lotRef(input.lotNumber)}: harorat me'yordan past — ${temp}`;
       case AlertType.OVERHEAT:
-        return `Lot ${input.lotNumber}: ortiqcha qizish — ${temp}`;
+        return `${lotRef(input.lotNumber)}: ortiqcha qizish — ${temp}`;
       /*
        * ⚠️ Xabar matni AYNAN QILINADIGAN ISHNI aytadi. «Datchik
        * nosoz» deb qo'yish kamlik qiladi: qaysi datchik va nima
@@ -547,7 +548,7 @@ export class AlertsService {
        */
       case AlertType.SENSOR_FAULT:
         return (
-          `Lot ${input.lotNumber}: CHIQISH datchigi qiymat bermayapti — ` +
+          `${lotRef(input.lotNumber)}: CHIQISH datchigi qiymat bermayapti — ` +
           'harorat noma‘lum, datchikni tekshirish kerak' +
           (input.inletTemperature !== null &&
           input.inletTemperature !== undefined
@@ -560,13 +561,13 @@ export class AlertsService {
           input.temperature,
         );
         return (
-          `Lot ${input.lotNumber}: suv aylanmayapti — kirish va chiqish ` +
+          `${lotRef(input.lotNumber)}: suv aylanmayapti — kirish va chiqish ` +
           `harorati deyarli teng (ayirma ${delta === null ? '—' : delta.toFixed(1)} °C, ` +
           `chiqish ${temp}). Nasos yoki ventilni tekshirish kerak`
         );
       }
       default:
-        return `Lot ${input.lotNumber}: holat o‘zgardi`;
+        return `${lotRef(input.lotNumber)}: holat o‘zgardi`;
     }
   }
 

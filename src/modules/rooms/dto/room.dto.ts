@@ -128,7 +128,7 @@ export interface RoomsSummary {
     roomName: string;
     temperature: number;
     boilerId: string;
-    lotNumber: string;
+    lotNumber: string | null;
     organizationName: string | null;
     districtName: string;
   }>;

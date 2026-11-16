@@ -1,3 +1,4 @@
+import { lotRef } from '../../helpers/boiler-label.helper';
 import {
   Injectable,
   Logger,
@@ -460,7 +461,7 @@ export class TelemetryService {
     }
 
     const previousDistrictId = device.districtId;
-    let detached: { id: string; lotNumber: string } | null = null;
+    let detached: { id: string; lotNumber: string | null } | null = null;
 
     if (device.boilerId) {
       const boiler = await this.boilers.findOne({
@@ -502,7 +503,7 @@ export class TelemetryService {
     if (detached) {
       this.logger.warn(
         `Qurilma ${device.deviceId}: tuman o‘zgardi → «${district.name}». ` +
-          `Lot ${detached.lotNumber} kotyolidan AVTOMATIK ajratildi`,
+          `${lotRef(detached.lotNumber)} kotyolidan AVTOMATIK ajratildi`,
       );
       await this.audit.log({
         action: AuditAction.UPDATE,
@@ -510,7 +511,7 @@ export class TelemetryService {
         entityId: device.id,
         summary:
           `Modul ${device.deviceId} platada «${district.name}» tumani tanlangani ` +
-          `uchun lot ${detached.lotNumber} kotyolidan avtomatik ajratildi`,
+          `uchun ${lotRef(detached.lotNumber)} kotyolidan avtomatik ajratildi`,
         before: { boilerId: detached.id, districtId: previousDistrictId },
         after: { boilerId: null, districtId: district.id },
       });
@@ -554,7 +555,7 @@ export class TelemetryService {
       });
       if (result.created > 0) {
         this.logger.log(
-          `Lot ${boiler.lotNumber}: ${result.created} ta yangi xona ` +
+          `${lotRef(boiler.lotNumber)}: ${result.created} ta yangi xona ` +
             'avtomatik yaratildi — kabinetda nomlash kerak',
         );
       }
@@ -721,7 +722,7 @@ export class TelemetryService {
       boiler.lastReadingAt.getTime() >= input.recordedAt.getTime()
     ) {
       this.logger.debug(
-        `Lot ${boiler.lotNumber}: eskirgan o‘lchov (${input.recordedAt.toISOString()}) ` +
+        `${lotRef(boiler.lotNumber)}: eskirgan o‘lchov (${input.recordedAt.toISOString()}) ` +
           'joriy holatga yozilmadi',
       );
       return;
@@ -807,7 +808,7 @@ export class TelemetryService {
       });
     } catch (error) {
       this.logger.warn(
-        `Ogohlantirish yozilmadi (lot ${boiler.lotNumber}): ` +
+        `Ogohlantirish yozilmadi (${lotRef(boiler.lotNumber)}): ` +
           (error instanceof Error ? error.message : String(error)),
       );
     }

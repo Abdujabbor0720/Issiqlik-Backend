@@ -35,12 +35,14 @@ export class CreateBoilerDto {
   @IsUUID('4', { message: 'Tuman tanlanmagan' })
   districtId!: string;
 
-  @ApiProperty({ description: 'Lot raqami', example: '2026-LOT-0114' })
-  @Transform(trim)
+  /** ⚠️ Ixtiyoriy: bo'sh satr → `null` («lot hali ma'lum emas»). */
+  @ApiPropertyOptional({ description: 'Lot raqami', example: '2026-LOT-0114' })
+  @Transform(toNullable)
+  @ValidateIf((_object, value) => value !== null)
   @IsString()
-  @IsNotEmpty({ message: 'Lot raqami kiritilmagan' })
   @MaxLength(64)
-  lotNumber!: string;
+  @IsOptional()
+  lotNumber?: string | null;
 
   @ApiPropertyOptional({ description: 'DXSH firma nomi', format: 'uuid' })
   @Transform(toNullable)

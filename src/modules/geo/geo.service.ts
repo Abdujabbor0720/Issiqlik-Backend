@@ -203,7 +203,7 @@ export class GeoService {
     const rows = await qb.getRawMany<Record<string, unknown>>();
     return rows.map((row) => ({
       id: String(row.id),
-      lotNumber: String(row.lotNumber),
+      lotNumber: (row.lotNumber as string | null) ?? null,
       organizationName: (row.organizationName as string) ?? null,
       districtId: String(row.districtId),
       districtName: String(row.districtName),

@@ -56,6 +56,11 @@ export class DevicesService {
       .addSelect(['boiler.id', 'boiler.lotNumber', 'boiler.districtId'])
       .leftJoin('boiler.district', 'district')
       .addSelect(['district.id', 'district.name', 'district.shortName'])
+      /* ⚠️ Muassasa nomi — lot raqami ixtiyoriy: lotsiz qozonxona
+         ro'yxatda faqat «Lotsiz» bo'lib, qaysi biri ekanini bilib
+         bo'lmasdi. */
+      .leftJoin('boiler.organization', 'boilerOrganization')
+      .addSelect(['boilerOrganization.id', 'boilerOrganization.name'])
       // ⚠️ Plata yuborgan tuman — alohida taxallus (`district` kotyolniki).
       .leftJoin('device.district', 'deviceDistrict')
       .addSelect([

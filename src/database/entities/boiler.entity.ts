@@ -67,13 +67,14 @@ export class Boiler extends BaseEntity {
   // ───────────────── Hujjat ma'lumotlari ─────────────────
 
   /**
-   * LOT RAQAMI — xarid hujjatidagi raqam.
+   * LOT RAQAMI — xarid hujjatidagi raqam. IXTIYORIY: rasmiy ro'yxatlarda
+   * ko'pincha yo'q va o'ylab topilgan raqam yozilmasligi kerak.
    * ⚠️ Yagona (unique): bitta lot ikki marta kiritilsa, kotyollar soni
-   * ikki baravar bo'lib ko'rinardi.
+   * ikki baravar bo'lib ko'rinardi. `NULL` lar bir-biriga to'qnashmaydi.
    */
   @Index({ unique: true })
-  @Column({ type: 'varchar', length: 64, name: 'lot_number' })
-  lotNumber!: string;
+  @Column({ type: 'varchar', length: 64, name: 'lot_number', nullable: true })
+  lotNumber!: string | null;
 
   /** DXSH firma — xizmat ko'rsatuvchi. */
   @Index()

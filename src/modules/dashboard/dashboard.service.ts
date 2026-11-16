@@ -236,7 +236,7 @@ export class DashboardService {
       const lastReadingAt = row.lastReadingAt as Date | string | null;
       return {
         boilerId: String(row.boilerId),
-        lotNumber: String(row.lotNumber),
+        lotNumber: (row.lotNumber as string | null) ?? null,
         organizationName: (row.organizationName as string | null) ?? null,
         objectTypeId: (row.objectTypeId as string | null) ?? null,
         objectTypeName: (row.objectTypeName as string | null) ?? null,

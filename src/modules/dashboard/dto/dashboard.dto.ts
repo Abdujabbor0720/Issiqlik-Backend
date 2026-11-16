@@ -93,7 +93,7 @@ export interface TrendPoint {
  */
 export interface GaugeItem {
   boilerId: string;
-  lotNumber: string;
+  lotNumber: string | null;
   organizationName: string | null;
   objectTypeId: string | null;
   objectTypeName: string | null;
