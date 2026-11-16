@@ -18,6 +18,8 @@ import type {
   DashboardQueryDto,
   DashboardSummary,
   DistrictRow,
+  GaugeBoard,
+  GaugeItem,
   TrendPoint,
   TrendQueryDto,
 } from './dto/dashboard.dto';
@@ -145,6 +147,118 @@ export class DashboardService {
       readingsLast24h,
       withoutCoordinates: Number(row?.withoutCoordinates ?? 0),
       withoutDevice: Number(row?.withoutDevice ?? 0),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * MUASSASALAR SHKALASI — har kotyolning kirish/chiqish harorati.
+   *
+   * ⚠️ BITTA so'rov, sahifalashsiz: ekran tur bo'yicha tablarni (Maktab,
+   * Bog'cha…) va o'rtacha qiymatlarni MIJOZDA hisoblaydi — tab almashganda
+   * qayta so'rov yo'q, sanoq va kartalar bir lahzadagi ma'lumotdan.
+   * Viloyatda bir necha yuz kotyol — bu bir necha o'n kilobayt.
+   *
+   * ⚠️ Oldingi o'lchov — kotyolning chiqish harorati bor IKKINCHI eng
+   * so'nggi telemetriyasi (`OFFSET 1`); kirish ham, chiqish ham AYNAN SHU
+   * qatordan. Bu joriy qiymat bilan bir xil qoida: telemetriya har
+   * o'lchovda chiqishni yozadi, kirish kelmasa esa `last_inlet_temperature`
+   * ga `null` yozadi (eskisi saqlanmaydi) — ya'ni joriy qiymatlar doim eng
+   * so'nggi qatorniki. Oldingi qatorda kirish bo'lmasa — o'zgarish `null`
+   * («noma'lum»), uzilishdan oldingi eski qiymat bilan solishtirilmaydi.
+   * `IDX_telemetry_boiler_time` bo'yicha har kotyolga ikki indeks yozuvi.
+   *
+   * ⚠️ Chiqish — `last_outlet_temperature`, bo'lmasa `last_temperature`:
+   * eski proshivka faqat bitta (chiqish) haroratini yuboradi.
+   */
+  async gauges(
+    query: DashboardQueryDto,
+    user?: AuthUser,
+  ): Promise<GaugeBoard> {
+    const settings = await this.settings.get();
+    // ⚠️ `column` — faqat shu fayldagi doimiy ifodalar (foydalanuvchi matni emas).
+    const previous = (column: string): string =>
+      `(SELECT ${column} FROM telemetry_readings r
+         WHERE r.boiler_id = boiler.id
+           AND COALESCE(r.outlet_temperature, r.temperature) IS NOT NULL
+         ORDER BY r.recorded_at DESC OFFSET 1 LIMIT 1)`;
+
+    const qb = this.boilers
+      .createQueryBuilder('boiler')
+      .innerJoin('boiler.district', 'district')
+      .leftJoin('boiler.organization', 'organization')
+      .leftJoin('organization.objectType', 'objectType')
+      .select('boiler.id', 'boilerId')
+      .addSelect('boiler.lot_number', 'lotNumber')
+      .addSelect('organization.name', 'organizationName')
+      .addSelect('objectType.id', 'objectTypeId')
+      .addSelect('objectType.name', 'objectTypeName')
+      .addSelect('objectType.code', 'objectTypeCode')
+      .addSelect('boiler.district_id', 'districtId')
+      .addSelect('district.name', 'districtName')
+      .addSelect('district.short_name', 'districtShortName')
+      .addSelect('boiler.current_status', 'status')
+      .addSelect('boiler.last_inlet_temperature', 'inlet')
+      .addSelect(
+        'COALESCE(boiler.last_outlet_temperature, boiler.last_temperature)',
+        'outlet',
+      )
+      .addSelect(previous('r.inlet_temperature'), 'prevInlet')
+      .addSelect(
+        previous('COALESCE(r.outlet_temperature, r.temperature)'),
+        'prevOutlet',
+      )
+      .addSelect('boiler.last_reading_at', 'lastReadingAt')
+      .addSelect(
+        'EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id)',
+        'hasDevice',
+      )
+      .where('boiler.is_archived = false');
+
+    applyDistrictScope(qb, user, 'boiler.district_id');
+    if (query.districtIds?.length) {
+      qb.andWhere('boiler.district_id IN (:...districtIds)', {
+        districtIds: query.districtIds,
+      });
+    }
+
+    const rows = await qb.getRawMany<Record<string, unknown>>();
+    const num = (value: unknown): number | null =>
+      value === null || value === undefined ? null : Number(value);
+    const delta = (now: number | null, before: number | null): number | null =>
+      now === null || before === null
+        ? null
+        : Math.round((now - before) * 10) / 10;
+
+    const items: GaugeItem[] = rows.map((row) => {
+      const inlet = num(row.inlet);
+      const outlet = num(row.outlet);
+      const lastReadingAt = row.lastReadingAt as Date | string | null;
+      return {
+        boilerId: String(row.boilerId),
+        lotNumber: String(row.lotNumber),
+        organizationName: (row.organizationName as string | null) ?? null,
+        objectTypeId: (row.objectTypeId as string | null) ?? null,
+        objectTypeName: (row.objectTypeName as string | null) ?? null,
+        objectTypeCode: (row.objectTypeCode as string | null) ?? null,
+        districtId: String(row.districtId),
+        districtName: String(row.districtName),
+        districtShortName: String(row.districtShortName),
+        status: String(row.status),
+        inlet,
+        outlet,
+        inletDelta: delta(inlet, num(row.prevInlet)),
+        outletDelta: delta(outlet, num(row.prevOutlet)),
+        lastReadingAt: lastReadingAt
+          ? new Date(lastReadingAt).toISOString()
+          : null,
+        hasDevice: row.hasDevice === true || row.hasDevice === 't',
+      };
+    });
+
+    return {
+      normTemperature: settings.normTemperature,
+      items,
       updatedAt: new Date().toISOString(),
     };
   }

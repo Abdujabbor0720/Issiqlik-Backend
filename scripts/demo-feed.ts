@@ -19,6 +19,7 @@
  * Ishlatish:
  *   npm run demo:feed              # bir marta
  *   npm run demo:feed -- --watch   # har 60 soniyada
+ *   npm run demo:feed -- --watch --every=15   # har 15 soniyada
  */
 import { AppDataSource } from '../src/config/data-source';
 import { Boiler } from '../src/database/entities/boiler.entity';
@@ -128,6 +129,16 @@ async function feedOnce(): Promise<void> {
     const temperature =
       Math.round((base + wave + (Math.random() - 0.5) * 1.6) * 100) / 100;
 
+    /*
+     * ⚠️ KIRISH (obratka) = chiqish − ΔT. ΔT qurilmaga XOS va barqaror
+     * (6–18 °C): aks holda «Muassasalar» ekranidagi kirish shkalasi har
+     * daqiqada tasodifiy sakrab, haqiqiy tizimga o'xshamasdi.
+     */
+    const deltaT = 6 + hashToUnit(`${device.deviceId}:dt`) * 12;
+    const inletTemperature =
+      Math.round((temperature - deltaT + (Math.random() - 0.5) * 0.8) * 100) /
+      100;
+
     const status = resolveBoilerStatus(
       { temperature, lastReadingAt: now, now },
       thresholds,
@@ -137,9 +148,16 @@ async function feedOnce(): Promise<void> {
       deviceId: device.id,
       boilerId: device.boilerId,
       temperature,
+      inletTemperature,
+      outletTemperature: temperature,
       status,
       recordedAt: now,
-      rawPayload: { deviceId: device.deviceId, temperature, source: 'demo' },
+      rawPayload: {
+        deviceId: device.deviceId,
+        temperature,
+        inlet_temperature_c: inletTemperature,
+        source: 'demo',
+      },
     });
 
     await devices.update(device.id, {
@@ -155,6 +173,8 @@ async function feedOnce(): Promise<void> {
       });
       await boilers.update(device.boilerId, {
         lastTemperature: temperature,
+        lastInletTemperature: inletTemperature,
+        lastOutletTemperature: temperature,
         lastReadingAt: now,
         currentStatus: status,
         ...(current?.currentStatus !== status ? { statusChangedAt: now } : {}),
@@ -170,10 +190,23 @@ async function feedOnce(): Promise<void> {
   );
 }
 
+/**
+ * `--every=15` — oraliq, soniya (sukut 60). Jonli ekranni sinashda
+ * bir daqiqa kutish uzoq; 5 s dan tez ruxsat yo'q — baza to'lib ketadi.
+ */
+function intervalSeconds(): number {
+  const flag = process.argv.find((arg) => arg.startsWith('--every='));
+  const value = flag ? Number(flag.slice('--every='.length)) : 60;
+  return Number.isFinite(value) ? Math.max(5, Math.round(value)) : 60;
+}
+
 async function main(): Promise<void> {
   const watch = process.argv.includes('--watch');
+  const every = intervalSeconds();
   console.log(
-    watch ? '▶ Demo oqimi (har 60 s). To‘xtatish: Ctrl+C' : '▶ Demo oqimi',
+    watch
+      ? `▶ Demo oqimi (har ${every} s). To‘xtatish: Ctrl+C`
+      : '▶ Demo oqimi',
   );
 
   await feedOnce();
@@ -185,7 +218,7 @@ async function main(): Promise<void> {
 
   setInterval(() => {
     void feedOnce();
-  }, 60_000);
+  }, every * 1000);
 }
 
 void main();

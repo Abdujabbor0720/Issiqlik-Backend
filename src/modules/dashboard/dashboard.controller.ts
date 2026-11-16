@@ -22,6 +22,15 @@ export class DashboardController {
     return this.service.summary(query, user);
   }
 
+  @Get('gauges')
+  @RequirePermissions(PERMISSIONS.REPORTS_VIEW)
+  @ApiOperation({
+    summary: 'Muassasalar shkalasi — har kotyolning kirish/chiqish harorati',
+  })
+  gauges(@Query() query: DashboardQueryDto, @CurrentUser() user: AuthUser) {
+    return this.service.gauges(query, user);
+  }
+
   @Get('districts')
   @RequirePermissions(PERMISSIONS.REPORTS_VIEW)
   @ApiOperation({ summary: 'Tumanlar kesimi' })

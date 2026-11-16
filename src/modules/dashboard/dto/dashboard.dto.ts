@@ -83,3 +83,36 @@ export interface TrendPoint {
   inactive: number;
   offline: number;
 }
+
+/**
+ * MUASSASALAR SHKALASI — bitta kotyol (qozonxona) qatori.
+ *
+ * ⚠️ `inletDelta` / `outletDelta` — OLDINGI o'lchovga nisbatan o'zgarish
+ * (°C, 0,1 gacha). Oldingi o'lchov yo'q yoki unda shu qiymat bo'lmasa —
+ * `null` («o'zgarish noma'lum», nol emas).
+ */
+export interface GaugeItem {
+  boilerId: string;
+  lotNumber: string;
+  organizationName: string | null;
+  objectTypeId: string | null;
+  objectTypeName: string | null;
+  objectTypeCode: string | null;
+  districtId: string;
+  districtName: string;
+  districtShortName: string;
+  status: string;
+  inlet: number | null;
+  outlet: number | null;
+  inletDelta: number | null;
+  outletDelta: number | null;
+  lastReadingAt: string | null;
+  hasDevice: boolean;
+}
+
+export interface GaugeBoard {
+  /** Shkaladagi me'yor belgisi (chiqish), °C — sozlamalardan. */
+  normTemperature: number;
+  items: GaugeItem[];
+  updatedAt: string;
+}
