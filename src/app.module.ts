@@ -15,6 +15,7 @@ import { BootstrapModule } from './database/bootstrap/bootstrap.module';
 import { ENTITIES } from './database/entities/entity-list';
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { StorageModule } from './modules/storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BoilersModule } from './modules/boilers/boilers.module';
 import { CatalogsModule } from './modules/catalogs/catalogs.module';
@@ -95,6 +96,7 @@ import { UsersModule } from './modules/users/users.module';
 
     // ─────── Umumiy (global) modullar ───────
     AuditModule,
+    StorageModule,
     SettingsModule,
     RealtimeModule,
 

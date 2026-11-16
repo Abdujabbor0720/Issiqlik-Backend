@@ -97,6 +97,15 @@ export interface AppConfig {
    */
   publicBaseUrl: string;
 
+  /** Fayl arxivi (DigitalOcean Spaces). Bo'sh qiymat — arxiv o'chiq. */
+  storage: {
+    region: string;
+    endpoint: string;
+    accessKey: string;
+    secretKey: string;
+    bucket: string;
+  };
+
   firmware: {
     /**
      * `.bin` FAYLLAR PAPKASI — WEB ROOT'DAN TASHQARIDA.
@@ -182,6 +191,18 @@ export default (): AppConfig => ({
       process.env.FIRMWARE_MAX_CONCURRENT ?? '10',
       10,
     ),
+  },
+
+  /*
+   * FAYL ARXIVI — DigitalOcean Spaces. ⚠️ Kalitlar FAQAT `.env` da;
+   * logga va javoblarga chiqmaydi.
+   */
+  storage: {
+    region: (process.env.DO_REGION ?? '').trim() || 'us-east-1',
+    endpoint: (process.env.DO_ENDPOINT ?? '').trim(),
+    accessKey: (process.env.DO_ACCESS_KEY ?? '').trim(),
+    secretKey: (process.env.DO_SECRET_KEY ?? '').trim(),
+    bucket: (process.env.DO_BUCKET_NAME ?? '').trim(),
   },
 
   throttle: {

@@ -5,11 +5,13 @@ import { District } from '../../database/entities/district.entity';
 import { BoilersController } from './boilers.controller';
 import { BoilersExportService } from './boilers-export.service';
 import { BoilersService } from './boilers.service';
+import { BoilerImportController } from './import/boiler-import.controller';
+import { BoilerImportService } from './import/boiler-import.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Boiler, District])],
-  controllers: [BoilersController],
-  providers: [BoilersService, BoilersExportService],
+  controllers: [BoilersController, BoilerImportController],
+  providers: [BoilersService, BoilersExportService, BoilerImportService],
   exports: [BoilersService],
 })
 export class BoilersModule {}

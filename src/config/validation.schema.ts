@@ -137,6 +137,19 @@ export const validationSchema = Joi.object({
 
   THROTTLE_TTL: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(300),
+
+  /*
+   * ⚠️ FAYL ARXIVI — DigitalOcean Spaces (S3 bilan mos). IXTIYORIY:
+   * berilmasa import ishlayveradi, faqat asl fayl arxivlanmaydi. Lekin
+   * QISMAN berilsa (masalan kalit bor, bucket yo'q) — server ISHGA
+   * TUSHMAYDI: «sozladim, lekin saqlanmayapti» degan jim xato bo'lmasin.
+   */
+  DO_REGION: Joi.string().allow('').optional(),
+  DO_ENDPOINT: Joi.string().allow('').optional(),
+  DO_ACCESS_KEY: Joi.string().allow('').optional(),
+  DO_SECRET_KEY: Joi.string().allow('').optional(),
+  DO_BUCKET_NAME: Joi.string().allow('').optional(),
+  DO_BUCKET_PUBLIC_BASE_URL: Joi.string().allow('').optional(),
 })
   // ⚠️ Chegaralar tartibi TEKSHIRILADI: `faol < o'rta` bo'lib qolsa, hamma
   // kotyol bir vaqtning o'zida ikki holatga tushardi va dashboard'dagi
@@ -145,6 +158,20 @@ export const validationSchema = Joi.object({
     const active = Number(value.BOILER_ACTIVE_MIN_C);
     const medium = Number(value.BOILER_MEDIUM_MIN_C);
     const critical = Number(value.BOILER_CRITICAL_MIN_C);
+    const storageKeys = [
+      'DO_ENDPOINT',
+      'DO_ACCESS_KEY',
+      'DO_SECRET_KEY',
+      'DO_BUCKET_NAME',
+    ] as const;
+    const storageSet = storageKeys.filter((key) =>
+      String((value as Record<string, unknown>)[key] ?? '').trim(),
+    );
+    if (storageSet.length > 0 && storageSet.length < storageKeys.length) {
+      return helpers.message({
+        custom: `Fayl arxivi (DO Spaces) qisman sozlangan — ${storageKeys.join(', ')} hammasi berilishi kerak`,
+      });
+    }
     if (!(active > medium && medium > critical)) {
       return helpers.message({
         custom:
