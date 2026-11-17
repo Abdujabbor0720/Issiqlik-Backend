@@ -220,8 +220,10 @@ const ROOM_COLLECTION_FIELDS = ['rooms', 'xonalar', 'room_temperatures'];
  *
  * ⚠️ Eng oddiy holat: platada bitta havo datchigi. Montajchi massiv
  * yasashni bilmasligi mumkin va `"room_temperature_c": 21.4` deb
- * yuboradi. Bu qiymat `xona` kaliti bilan BITTA xona bo'lib
- * qabul qilinadi.
+ * yuboradi. Bu qiymat BITTA xona bo'lib qabul qilinadi: bu yerda
+ * vaqtinchalik `xona` kaliti bilan, telemetriya servisi esa uni QURILMA
+ * identifikatoriga almashtiradi (bitta binodagi har bir modul — alohida
+ * xona, `TelemetryService.roomSamplesFor`).
  */
 const SINGLE_ROOM_FIELDS = [
   'room_temperature_c',

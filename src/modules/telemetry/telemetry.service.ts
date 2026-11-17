@@ -9,7 +9,6 @@ import { Between, Repository } from 'typeorm';
 import {
   AuditAction,
   BoilerStatus,
-  ModuleType,
   ProbeKind,
   UserRole,
 } from '../../common/constants/enums';
@@ -687,24 +686,24 @@ export class TelemetryService {
   }
 
   /**
-   * XONA KALITI — xona modulining yakka qiymati O'Z identifikatori bilan.
+   * XONA KALITI — yakka qiymat (`room_temperature_c`) QURILMA identifikatori
+   * bilan (proshivka bilan kelishilgan: key = "<device_id>").
    *
    * ⚠️⚠️ Bitta binoda (kotyolda) bir nechta xona moduli bo'ladi — har
-   * sinfga bittadan. Hammasi `room_temperature_c` yuboradi va u `xona`
-   * kalitiga tushsa, BITTA xona bo'lib, qiymatlar bir-birini bosib ketardi.
-   * Qurilma identifikatori (`esp32-…`) doimiy va yagona — xona kaliti uchun
-   * aynan shu kerak.
+   * sinfga bittadan. Hammasi `room_temperature_c` yuboradi va u umumiy
+   * `xona` kalitiga tushsa, BITTA xona bo'lib, qiymatlar bir-birini bosib
+   * ketardi. Qurilma identifikatori (`esp32-…`) doimiy va yagona.
    *
-   * ⚠️ Qozonxona modulining yakka xona qiymati AVVALGIDEK `xona`: uning
-   * kaliti o'zgarsa, mavjud xonaning tarixi ikkiga bo'linardi.
+   * ⚠️ Modul TURIGA bog'lanmaydi: tur aniqlanmasdan (masalan kotyolga oldin
+   * ulangan 1.0.0 modul) kelgan signal ham AYNI xonaga tushishi kerak —
+   * aks holda bitta datchik tur aniqlangach ikkinchi xona bo'lib qolardi.
+   * `rooms[]` massivining kalitlari o'zgarishsiz qoladi.
    */
   private roomSamplesFor(
     device: AuthenticatedDevice,
     payload: ParsedRoomSamples,
   ): RoomSample[] {
-    if (device.moduleType !== ModuleType.ROOM || payload.source !== 'single') {
-      return payload.samples;
-    }
+    if (payload.source !== 'single') return payload.samples;
     const key = normalizeRoomKey(device.deviceId);
     if (!key) return payload.samples;
     return payload.samples.map((sample) => ({ ...sample, key }));

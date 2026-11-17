@@ -13,6 +13,7 @@ import {
   Min,
 } from 'class-validator';
 import {
+  ModuleType,
   RolloutStatus,
   RolloutTargetType,
 } from '../../../common/constants/enums';
@@ -42,6 +43,15 @@ export class UploadFirmwareDto {
   @MaxLength(1000)
   @IsOptional()
   note?: string;
+
+  /**
+   * Administrator TANLAGAN modul turi — fayl ichidagi belgi bilan
+   * SOLISHTIRILADI (versiya bilan AYNI qoida). Mos kelmasa rad etiladi.
+   */
+  @ApiPropertyOptional({ enum: ModuleType })
+  @IsEnum(ModuleType, { message: 'Modul turi: boiler yoki room' })
+  @IsOptional()
+  moduleType?: ModuleType;
 }
 
 export class CreateRolloutDto {

@@ -114,6 +114,7 @@ export class FirmwareService {
     declaredVersion: string | undefined,
     note: string | undefined,
     user: AuthUser,
+    declaredType?: ModuleType,
   ): Promise<ReleaseRow> {
     if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
       throw new BadRequestException('Proshivka fayli yuborilmagan');
@@ -157,6 +158,20 @@ export class FirmwareService {
       );
     }
     const { version: markerVersion, moduleType } = marks[0];
+
+    /*
+     * ⚠️⚠️ TANLANGAN TUR FAYLGA ISHONMAYDI, FAYL TANLOVGA ISHONMAYDI — ikkalasi
+     * MOS bo'lishi shart. Faqat tanlovga tayanilsa, adashgan bosish qozonxona
+     * proshivkasini xona moduliga yo'llardi; bu yerda esa u yuklashdayoq
+     * to'xtaydi va sababi aytiladi.
+     */
+    if (declaredType && declaredType !== moduleType) {
+      throw new BadRequestException(
+        `Modul turi mos emas: fayl ichidagi belgi — ${MODULE_LABEL[moduleType]} ` +
+          `(${moduleType === ModuleType.ROOM ? 'XONA_FW_VERSION' : FW_VERSION_MARKER.slice(0, -1)}), ` +
+          `tanlangani — ${MODULE_LABEL[declaredType]}`,
+      );
+    }
 
     /*
      * ⚠️⚠️ QO'LDA KIRITILGAN VERSIYAGA ISHONILMAYDI. §9.2 aynan shuni

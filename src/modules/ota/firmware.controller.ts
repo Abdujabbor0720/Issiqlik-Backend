@@ -88,6 +88,7 @@ export class FirmwareController {
         file: { type: 'string', format: 'binary' },
         version: { type: 'string', example: '2.0.1' },
         note: { type: 'string' },
+        moduleType: { type: 'string', enum: ['boiler', 'room'] },
       },
       required: ['file'],
     },
@@ -99,7 +100,13 @@ export class FirmwareController {
     @Body() dto: UploadFirmwareDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.service.upload(file, dto.version, dto.note, user);
+    return this.service.upload(
+      file,
+      dto.version,
+      dto.note,
+      user,
+      dto.moduleType,
+    );
   }
 
   /**

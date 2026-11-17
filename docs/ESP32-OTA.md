@@ -540,7 +540,8 @@ Qoidalar — proshivka shularga tayanishi mumkin:
   «1-sinf» deb nomlaydi. Kalit o'zgarmasa, nom va tarix saqlanadi —
   plata almashtirilsa ham (datchiklar o'sha joyda qolsa).
 - **Bitta havo datchigi bo'lsa** massiv shart emas:
-  `"room_temperature_c": 21.4` ham qabul qilinadi (kalit `xona`).
+  `"room_temperature_c": 21.4` ham qabul qilinadi (kalit — qurilma
+  identifikatori: bitta binodagi har bir modul alohida xona).
 - **Diapazon −40…70 °C.** Undan tashqarisi (jumladan DS18B20 ning `85` va
   `-127` nosozlik qiymatlari) **jim tashlanadi** — so'rov rad etilMAYDI,
   kotyol harorati baribir yoziladi.
