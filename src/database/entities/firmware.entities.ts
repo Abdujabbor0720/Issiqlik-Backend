@@ -1,5 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import {
+  ModuleType,
   OtaEventStatus,
   RolloutStatus,
   RolloutTargetType,
@@ -30,6 +31,21 @@ export const OTA_PARTITION_MAX_BYTES = 1_966_080;
 export const FW_VERSION_MARKER = 'XONOBOD_FW_VERSION=';
 
 /**
+ * XONA MODULI PROSHIVKASINING BELGISI (DHT22, 1.x).
+ *
+ * ⚠️⚠️ ALOHIDA BELGI — relizning TURI faylning O'ZIDAN aniqlanadi. Tur
+ * administrator tanlaydigan maydon bo'lsa, bitta adashgan bosish qozonxona
+ * proshivkasini xona moduliga (yoki aksincha) yo'llab yuborardi.
+ */
+export const ROOM_FW_VERSION_MARKER = 'XONA_FW_VERSION=';
+
+/** Belgi → modul turi. Tartib muhim emas: ikkalasi birga bo'lsa RAD etiladi. */
+export const FW_MARKERS: ReadonlyArray<{ marker: string; type: ModuleType }> = [
+  { marker: FW_VERSION_MARKER, type: ModuleType.BOILER },
+  { marker: ROOM_FW_VERSION_MARKER, type: ModuleType.ROOM },
+];
+
+/**
  * YUKLANGAN PROSHIVKA RELIZI.
  *
  * ⚠️⚠️ FAYLNING O'ZI BAZADA EMAS, faqat yo'li. Sabab: 1.9 MB lik
@@ -44,7 +60,9 @@ export const FW_VERSION_MARKER = 'XONOBOD_FW_VERSION=';
  * tekshirilgandan keyin beriladi.
  */
 @Entity('firmware_releases')
-@Index('UQ_firmware_releases_version', ['version'], { unique: true })
+@Index('UQ_firmware_releases_type_version', ['moduleType', 'version'], {
+  unique: true,
+})
 @Index('UQ_firmware_releases_sha256', ['sha256'], { unique: true })
 export class FirmwareRelease extends BaseEntity {
   /**
@@ -58,6 +76,20 @@ export class FirmwareRelease extends BaseEntity {
    */
   @Column({ type: 'varchar', length: 32 })
   version!: string;
+
+  /**
+   * Qaysi modul turi uchun — `.bin` ICHIDAGI belgidan
+   * (`XONOBOD_FW_VERSION=` → `boiler`, `XONA_FW_VERSION=` → `room`).
+   *
+   * ⚠️ Versiya HAR TUR ichida yagona: xona 1.x va qozonxona 2.x mustaqil.
+   */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    name: 'module_type',
+    default: ModuleType.BOILER,
+  })
+  moduleType!: ModuleType;
 
   /** Diskdagi to'liq yo'l (`FIRMWARE_DIR` ichida). */
   @Column({ type: 'varchar', length: 500, name: 'file_path' })
@@ -116,7 +148,7 @@ export class FirmwareRelease extends BaseEntity {
  * o'rnatib cheksiz halqaga tushardi.
  */
 @Entity('firmware_rollouts')
-@Index('UQ_firmware_rollouts_one_active', ['status'], {
+@Index('UQ_firmware_rollouts_one_active', ['moduleType'], {
   unique: true,
   where: `"status" = 'active'`,
 })
@@ -124,6 +156,19 @@ export class FirmwareRelease extends BaseEntity {
 export class FirmwareRollout extends BaseEntity {
   @Column({ type: 'uuid', name: 'release_id' })
   releaseId!: string;
+
+  /**
+   * Relizning turi (nusxa). ⚠️ Bir vaqtda HAR TUR uchun BITTA faol
+   * tarqatish: qozonxona va xona modullari mustaqil yangilanadi, lekin
+   * bitta qurilmaga ikki xil versiya hech qachon taklif qilinmaydi.
+   */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    name: 'module_type',
+    default: ModuleType.BOILER,
+  })
+  moduleType!: ModuleType;
 
   @ManyToOne(() => FirmwareRelease, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'release_id' })

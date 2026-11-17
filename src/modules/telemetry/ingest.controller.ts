@@ -163,6 +163,7 @@ export class IngestController {
     return this.service.ingest(parsed.dto, parsed.apiKey, parsed.raw, {
       ip: req.ip ?? req.socket.remoteAddress ?? null,
       firmwareVersion: parsed.firmwareVersion,
+      moduleTypeHeader: parsed.moduleTypeHeader,
     });
   }
 }

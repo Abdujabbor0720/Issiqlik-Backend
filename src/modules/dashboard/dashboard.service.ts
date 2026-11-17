@@ -83,7 +83,8 @@ export class DashboardService {
         'withoutCoordinates',
       )
       .addSelect(
-        'COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id))',
+        // ⚠️ Faqat QOZONXONA moduli hisoblanadi — xona moduli kotyol haroratini bermaydi.
+        "COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.module_type = 'boiler'))",
         'withoutDevice',
       )
       .where('boiler.is_archived = false');
@@ -171,10 +172,7 @@ export class DashboardService {
    * ⚠️ Chiqish — `last_outlet_temperature`, bo'lmasa `last_temperature`:
    * eski proshivka faqat bitta (chiqish) haroratini yuboradi.
    */
-  async gauges(
-    query: DashboardQueryDto,
-    user?: AuthUser,
-  ): Promise<GaugeBoard> {
+  async gauges(query: DashboardQueryDto, user?: AuthUser): Promise<GaugeBoard> {
     const settings = await this.settings.get();
     // ⚠️ `column` — faqat shu fayldagi doimiy ifodalar (foydalanuvchi matni emas).
     const previous = (column: string): string =>
@@ -210,7 +208,7 @@ export class DashboardService {
       )
       .addSelect('boiler.last_reading_at', 'lastReadingAt')
       .addSelect(
-        'EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id)',
+        "EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.module_type = 'boiler')",
         'hasDevice',
       )
       .where('boiler.is_archived = false');

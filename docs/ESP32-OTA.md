@@ -504,6 +504,9 @@ Server qoidalari (biznes qarori, 2026-11-14):
 - Tizim kodi (`asaka`) va to'liq nom (`Asaka tumani`, tutuq belgisi har
   xil bo'lsa ham) ham qabul qilinadi, lekin **asosiy shakl — SOATO**.
   Qisqa nom («Andijon») qabul qilinMAYDI: shahar bilan tuman adashadi.
+- Xona moduli proshivkasining kalitlari ham qabul qilinadi (aniq ro'yxat,
+  §5.1): `andijon-sh`, `xonobod-sh`, `boston` va tizim kodi bilan bir xil
+  bo'lgan qolgan 13 tasi.
 - `district` yubormaydigan eski proshivka o'zgarishsiz ishlaydi; uning
   tumani biriktirilgan kotyoldan olinadi, biriktirilmaganini faqat admin
   ko'radi.
@@ -546,12 +549,80 @@ Qoidalar — proshivka shularga tayanishi mumkin:
 - Quvur datchiklari umuman ishlamasa-yu, xonalar kelsa — **201**
   (`status: null`). Plata faqat xonalar uchun ham o'rnatilishi mumkin.
 - Bitta so'rovda **32 xonagacha**, bitta binoda **64 xonagacha**.
-- Xona faqat **kotyolga biriktirilgan** qurilmadan qabul qilinadi
-  (xona binoga tegishli). Biriktirilgandan keyingi birinchi signalda
-  xonalar o'zi paydo bo'ladi.
+- Xona yozuvi faqat **kotyolga biriktirilgan** qurilmada yaratiladi
+  (xona binoga tegishli). Biriktirilmagan qurilmaning xona harorati ham
+  **201** bilan qabul qilinadi va qurilmaning o'zida («ESP32 modullari»)
+  ko'rinadi; biriktirilgandan keyingi birinchi signalda xonalar o'zi
+  paydo bo'ladi.
 - Eski proshivka (`rooms` siz) **o'zgarishsiz ishlayveradi**.
 
-### OTA
+### 5.1. Xona harorati moduli (ESP32 + DHT22)
+
+Kotyol (suv) datchigi YO'Q — faqat xona havosi. Manzil, sarlavhalar va
+javob kodlari qozonxona moduli bilan AYNI; qo'shimcha sarlavha:
+
+```
+X-Module-Type: room
+```
+
+Har 60 soniyada:
+
+```json
+{"device_id":"esp32-0070077c641c","district":"asaka","mfy":"Baraka",
+ "institution_name":"12-maktab","object_type":"school",
+ "room_temperature_c":24.40,"humidity":45.2}
+```
+
+| Maydon | Majburiy | Qoida |
+|---|---|---|
+| `room_temperature_c` | ha* | −40…70 °C. Kalit — qurilma identifikatori: bitta binodagi har bir modul ALOHIDA xona |
+| `district` | yo'q | §5 jadvali yoki proshivka kaliti (`andijon-sh`, `xonobod-sh`, `boston`, …) |
+| `mfy` | yo'q | UTF-8 matn, 120 belgigacha |
+| `institution_name` | yo'q | Erkin matn, 120 belgigacha |
+| `object_type` | yo'q | Katalog kaliti: `school`, `kindergarten`, `college`, `clinic`, `hospital`, `admin`, `residential`, `other` |
+| `humidity` | yo'q | 0…100 %. Qurilmada oxirgi qiymat saqlanadi |
+| `module_type` | yo'q | `room` — sarlavha bo'lmasa zaxira |
+
+\* yoki `rooms` massivi. Javoblar:
+
+| Holat | Javob |
+|---|---|
+| Xona harorati bor (`temperature_c` yo'q) | **201**, `status: null`. Kotyol o'lchovi YARATILMAYDI |
+| Kotyol harorati ham, xona harorati ham yo'q | **422** «Harorat yuborilmagan» |
+| Xona harorati diapazondan tashqarida | **422** «Xona harorati … diapazonidan tashqarida» |
+
+Server qoidalari:
+
+- **Joylashuv maydonlari faqat ko'rsatish uchun** (`institution_id` bilan
+  AYNI doktrina). Kelgan qiymat oxirgisini yangilaydi, kelmagani
+  o'chirilmaydi. Yaroqsiz qiymat (masalan `object_type: "maktab 1"`) jim
+  e'tiborsiz qoldiriladi — so'rov rad etilmaydi.
+- **Modul turi**: sarlavha/`module_type` ustun. Aytilmasa — yukdan: suv
+  harorati umuman yo'q, xona harorati bor → `room`. Kotyolga ulangan
+  qurilmada tur faqat plata aytganda o'zgaradi.
+- **Bitta kotyolga bitta QOZONXONA moduli**, xona modullari esa bir nechta
+  bo'lishi mumkin (har sinfga bittadan). Xona moduli kotyol holatiga
+  tegmaydi; qozonxona moduli bo'lmasa, kotyol hamon «modulsiz».
+- MFY ro'yxati (878 ta) serverda hozircha TEKSHIRILMAYDI — matn
+  saqlanadi va ko'rsatiladi.
+
+### OTA — modul turlari AJRATILGAN
+
+Relizning turi `.bin` ICHIDAGI belgidan aniqlanadi:
+
+| Belgi | Tur |
+|---|---|
+| `XONOBOD_FW_VERSION=x.y.z;` | qozonxona moduli (o'zgarmaydi) |
+| `XONA_FW_VERSION=x.y.z;` | xona moduli |
+
+- Reliz faqat O'Z turidagi qurilmaga taklif qilinadi va beriladi;
+  boshqa turdagi faylni so'rasa — `404`.
+- Ikkala belgi bitta faylda bo'lsa — yuklash RAD etiladi.
+- Versiya har tur ichida yagona (xona 1.x va qozonxona 2.x mustaqil).
+  Har tur uchun bir vaqtda bittadan faol tarqatish.
+- Xona moduli `X-Module-Type: room` ni **barcha** so'rovlarda (telemetriya,
+  `check`, `download`, `report`) yuborishi kerak: shunda birinchi so'rov
+  OTA tekshiruvi bo'lsa ham tur aniq bo'ladi.
 
 ```
 GET  /ota/index.php?a=check&device_id=…&version=…&inst=…

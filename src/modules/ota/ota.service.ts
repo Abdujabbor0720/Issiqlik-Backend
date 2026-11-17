@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
+  ModuleType,
   OtaEventStatus,
   RolloutStatus,
   RolloutTargetType,
@@ -105,6 +106,8 @@ export class OtaService {
     meta: DeviceRequestMeta,
   ): Promise<OtaCheckResponse> {
     const { device } = await this.auth.authenticate(deviceId, token, meta);
+    // ⚠️ Plata `X-Module-Type` ni aytgan bo'lsa — tur DARHOL yangilanadi.
+    await this.auth.applyModuleType(device, meta.moduleType ?? null);
 
     /*
      * ⚠️ §5: «Har bir so'rovda devices.firmware_version, last_check_at
@@ -120,11 +123,23 @@ export class OtaService {
       ...(running ? { firmwareVersion: running } : {}),
     });
 
-    const rollout = await this.activeRollout();
+    /*
+     * ⚠️⚠️ FAQAT QURILMANING O'Z TURIDAGI tarqatish. Qozonxona proshivkasi
+     * xona moduliga (yoki aksincha) HECH QACHON taklif qilinmaydi.
+     */
+    const rollout = await this.activeRollout(device.moduleType);
     if (!rollout) return { update: false };
 
     const release = rollout.release;
     if (!release || release.isArchived) return { update: false };
+    // ⚠️ Ikkinchi qavat: tarqatish yozuvi va relizning turi ham mos bo'lsin.
+    if (release.moduleType !== device.moduleType) {
+      this.logger.error(
+        `Tarqatish ${rollout.id}: reliz turi (${release.moduleType}) ` +
+          `qurilma turiga (${device.moduleType}) mos emas — taklif qilinmadi`,
+      );
+      return { update: false };
+    }
 
     /*
      * ⚠️ AYNI VERSIYA TAKLIF QILINMAYDI. Proshivka o'zi ham tekshiradi
@@ -201,12 +216,20 @@ export class OtaService {
     meta: DeviceRequestMeta,
   ): Promise<{ release: FirmwareRelease; releaseSlot: () => void }> {
     const { device } = await this.auth.authenticate(deviceId, token, meta);
+    await this.auth.applyModuleType(device, meta.moduleType ?? null);
 
     if (!version) {
       throw new NotFoundException('Versiya ko‘rsatilmagan');
     }
 
-    const release = await this.releases.findOne({ where: { version } });
+    /*
+     * ⚠️ Versiya HAR TUR ichida yagona — reliz qurilmaning O'Z turi bilan
+     * qidiriladi: xona moduli `v=2.0.1` so'rasa ham qozonxona fayli
+     * berilmaydi.
+     */
+    const release = await this.releases.findOne({
+      where: { version, moduleType: device.moduleType },
+    });
     if (!release || release.isArchived) {
       throw new NotFoundException('Bunday proshivka versiyasi yo‘q');
     }
@@ -217,7 +240,7 @@ export class OtaService {
      * qurilmaning tokeni bilan har qanday proshivkani yuklab olib,
      * ichidan boshqa maxfiy ma'lumotni ajratib olish mumkin bo'lardi.
      */
-    const rollout = await this.activeRollout();
+    const rollout = await this.activeRollout(device.moduleType);
     const allowed =
       rollout !== null &&
       rollout.release?.version === version &&
@@ -292,6 +315,7 @@ export class OtaService {
     meta: DeviceRequestMeta,
   ): Promise<{ ok: true }> {
     const { device } = await this.auth.authenticate(deviceId, token, meta);
+    await this.auth.applyModuleType(device, meta.moduleType ?? null);
 
     const status = this.parseStatus(body.status);
     if (!status) {
@@ -336,7 +360,7 @@ export class OtaService {
          * sog'lom qurilma abadiy bloklanib qolardi.
          */
         if (target) await this.clearFailures(device.id, target);
-        await this.finishRolloutIfComplete();
+        await this.finishRolloutIfComplete(device.moduleType);
         break;
 
       case OtaEventStatus.FAILED:
@@ -388,9 +412,11 @@ export class OtaService {
    * (`UQ_firmware_rollouts_one_active`), shuning uchun bu yerda
    * «qaysi birini tanlash» muammosi YO'Q.
    */
-  private async activeRollout(): Promise<FirmwareRollout | null> {
+  private async activeRollout(
+    moduleType: ModuleType,
+  ): Promise<FirmwareRollout | null> {
     return this.rollouts.findOne({
-      where: { status: RolloutStatus.ACTIVE },
+      where: { status: RolloutStatus.ACTIVE, moduleType },
       relations: { release: true },
     });
   }
@@ -414,6 +440,9 @@ export class OtaService {
     rollout: FirmwareRollout,
   ): Promise<boolean> {
     const ids = rollout.targetIds ?? [];
+
+    // ⚠️ Boshqa turdagi modul HECH QAYSI maqsadga kirmaydi («hammasi» ham).
+    if (device.moduleType !== rollout.moduleType) return false;
 
     if (rollout.targetType === RolloutTargetType.ALL) return true;
 
@@ -582,8 +611,8 @@ export class OtaService {
    * `active` qolib, bir vaqtda bitta faol tarqatish qoidasi tufayli
    * keyingi versiyani tarqatishga YO'L BERMASDI.
    */
-  private async finishRolloutIfComplete(): Promise<void> {
-    const rollout = await this.activeRollout();
+  private async finishRolloutIfComplete(moduleType: ModuleType): Promise<void> {
+    const rollout = await this.activeRollout(moduleType);
     if (!rollout?.release) return;
 
     const version = rollout.release.version;
@@ -613,16 +642,25 @@ export class OtaService {
   private async targetDeviceIds(rollout: FirmwareRollout): Promise<string[]> {
     const ids = rollout.targetIds ?? [];
 
-    if (rollout.targetType === RolloutTargetType.DEVICES) return ids;
-
     const qb = this.devices
       .createQueryBuilder('device')
       .select('device.id', 'id')
       /*
        * ⚠️ Faolsizlantirilgan qurilma hisobga olinmaydi: u yangilanmaydi
-       * va tarqatishni abadiy «tugamagan» holda ushlab turardi.
+       * va tarqatishni abadiy «tugamagan» holda ushlab turardi. Boshqa
+       * turdagi modul ham — u bu relizni HECH QACHON olmaydi.
        */
-      .where('device.is_active = true');
+      .where('device.is_active = true')
+      .andWhere('device.module_type = :moduleType', {
+        moduleType: rollout.moduleType,
+      });
+
+    if (rollout.targetType === RolloutTargetType.DEVICES) {
+      if (ids.length === 0) return [];
+      qb.andWhere('device.id IN (:...ids)', { ids });
+      const rows = await qb.getRawMany<{ id: string }>();
+      return rows.map((row) => row.id);
+    }
 
     if (rollout.targetType === RolloutTargetType.ALL) {
       const rows = await qb.getRawMany<{ id: string }>();

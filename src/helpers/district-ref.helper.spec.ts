@@ -47,6 +47,20 @@ describe('matchDistrict', () => {
     expect(matchDistrict('boz', DISTRICTS)?.id).toBe('boston');
   });
 
+  it('⚠️ xona moduli proshivkasining kalitlari (andijon-sh, boston)', () => {
+    expect(matchDistrict('andijon-sh', DISTRICTS)?.id).toBe('city');
+    expect(matchDistrict('ANDIJON-SH', DISTRICTS)?.id).toBe('city');
+    expect(matchDistrict('boston', DISTRICTS)?.id).toBe('boston');
+    // Qolgan kalitlar tizim kodi bilan AYNI.
+    expect(matchDistrict('andijon', DISTRICTS)?.id).toBe('rayon');
+    expect(matchDistrict('qorgontepa', DISTRICTS)?.id).toBe('qorgon');
+  });
+
+  it('⚠️ prototip kalitlari tuman bo‘lib qolmaydi', () => {
+    expect(matchDistrict('constructor', DISTRICTS)).toBeNull();
+    expect(matchDistrict('__proto__', DISTRICTS)).toBeNull();
+  });
+
   it('⚠️ to‘liq nom — tutuq belgisi har xil yozilsa ham', () => {
     expect(matchDistrict("Bo'ston tumani", DISTRICTS)?.id).toBe('boston');
     expect(matchDistrict('Qo‘rg‘ontepa tumani', DISTRICTS)?.id).toBe('qorgon');

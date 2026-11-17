@@ -315,6 +315,22 @@ export function extractFirmwareVersion(
 }
 
 /**
+ * MODUL TURI SARLAVHASI (`X-Module-Type: room`) — xom ko'rinishda.
+ *
+ * ⚠️ Qozonxona proshivkasida bu sarlavha YO'Q (kontrakt qotirilgan) —
+ * `null` qaytadi va tur yukning shaklidan yoki bazadan olinadi. Qiymatni
+ * talqin qilish `parseModuleType()` da (`device-profile.helper.ts`).
+ */
+export function extractModuleTypeHeader(
+  headers: Record<string, unknown>,
+): string | null {
+  const value = headers['x-module-type'];
+  if (typeof value === 'string' && value.trim())
+    return value.trim().slice(0, 32);
+  return null;
+}
+
+/**
  * QURILMA SO'ROVINI O'QISH — IKKI KONTROLLER UCHUN BITTA joy.
  *
  * ⚠️⚠️ NIMA UCHUN ALOHIDA FUNKSIYA. Qurilma telemetriyasi UCH xil
@@ -338,6 +354,7 @@ export async function parseDeviceRequest(
   apiKey: string | null;
   raw: Record<string, unknown>;
   firmwareVersion: string | null;
+  moduleTypeHeader: string | null;
 }> {
   const raw =
     body && typeof body === 'object' && !Array.isArray(body)
@@ -399,5 +416,6 @@ export async function parseDeviceRequest(
     apiKey: extractApiKey(headers, raw, query),
     raw,
     firmwareVersion: extractFirmwareVersion(headers),
+    moduleTypeHeader: extractModuleTypeHeader(headers),
   };
 }

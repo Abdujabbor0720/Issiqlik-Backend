@@ -55,6 +55,16 @@ export interface RejectedRoomSample {
 export interface ParsedRoomSamples {
   samples: RoomSample[];
   rejected: RejectedRoomSample[];
+  /**
+   * Xona qiymati QAYSI shaklda kelgan (`extractRoomSamples` to'ldiradi):
+   * `collection` — `rooms` massivi/obyekti, `single` — yakka maydon
+   * (`room_temperature_c`), `undefined` — xona ma'lumoti umuman yo'q.
+   *
+   * ⚠️ Xona moduli yakka qiymatni o'z identifikatori bilan xonaga
+   * yozadi: bitta binoda bir nechta xona moduli bo'ladi va hammasi
+   * `xona` kalitiga tushsa, BITTA xona bo'lib bir-birini bosib ketardi.
+   */
+  source?: 'collection' | 'single';
 }
 
 /** Massiv elementidagi kalit nomlari — proshivka qaysi birini tanlasa ham. */
@@ -236,13 +246,16 @@ export function extractRoomSamples(
   for (const field of ROOM_COLLECTION_FIELDS) {
     const value = raw[field];
     if (value !== undefined && value !== null) {
-      return parseRoomSamples(value);
+      return { ...parseRoomSamples(value), source: 'collection' };
     }
   }
   for (const field of SINGLE_ROOM_FIELDS) {
     const value = raw[field];
     if (value !== undefined && value !== null && value !== '') {
-      return parseRoomSamples({ [SINGLE_ROOM_KEY]: value });
+      return {
+        ...parseRoomSamples({ [SINGLE_ROOM_KEY]: value }),
+        source: 'single',
+      };
     }
   }
   return { samples: [], rejected: [] };

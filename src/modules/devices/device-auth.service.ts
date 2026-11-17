@@ -7,9 +7,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { AuditAction, ModuleType } from '../../common/constants/enums';
 import { Device } from '../../database/entities/device.entity';
 import { PendingDevice } from '../../database/entities/pending-device.entity';
 import { isUniqueViolation } from '../../helpers/db-errors.helper';
+import { AuditService } from '../audit/audit.service';
 import { DeviceKeyService } from './device-key.service';
 
 /** Token qanday tekshirilgani — jurnal va kabinet uchun. */
@@ -27,7 +29,33 @@ export type AuthenticatedDevice = Pick<
   | 'firmwareVersion'
   | 'districtId'
   | 'reportedDistrict'
+  | 'moduleType'
+  | 'reportedMfy'
+  | 'reportedInstitution'
+  | 'reportedObjectType'
 >;
+
+/**
+ * Autentifikatsiyada o'qiladigan ustunlar — `authenticate` va avtomatik
+ * ro'yxatga olishdagi poyga yo'li uchun BITTA ro'yxat (ikki nusxa bo'lsa,
+ * yangi maydon ulardan faqat biriga qo'shilib qolardi).
+ */
+const AUTH_SELECT = {
+  id: true,
+  deviceId: true,
+  apiKeyHash: true,
+  allowSharedToken: true,
+  institutionHint: true,
+  firmwareVersion: true,
+  boilerId: true,
+  isActive: true,
+  districtId: true,
+  reportedDistrict: true,
+  moduleType: true,
+  reportedMfy: true,
+  reportedInstitution: true,
+  reportedObjectType: true,
+} as const;
 
 export interface DeviceAuthResult {
   device: AuthenticatedDevice;
@@ -47,6 +75,12 @@ export interface DeviceRequestMeta {
   districtId?: string | null;
   /** Plata yuborgan xom qiymat. */
   reportedDistrict?: string | null;
+  /**
+   * Modul turi — FAQAT avtomatik ro'yxatga olishda yoziladi. Mavjud
+   * qurilmaning turini `applyModuleType()` o'zgartiradi (kotyol qoidasi
+   * bilan).
+   */
+  moduleType?: ModuleType | null;
 }
 
 /**
@@ -98,6 +132,7 @@ export class DeviceAuthService {
     private readonly pending: Repository<PendingDevice>,
     private readonly keys: DeviceKeyService,
     private readonly config: ConfigService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -127,18 +162,7 @@ export class DeviceAuthService {
 
     const device = await this.devices.findOne({
       where: { deviceId },
-      select: {
-        id: true,
-        deviceId: true,
-        apiKeyHash: true,
-        allowSharedToken: true,
-        institutionHint: true,
-        firmwareVersion: true,
-        boilerId: true,
-        isActive: true,
-        districtId: true,
-        reportedDistrict: true,
-      },
+      select: AUTH_SELECT,
     });
 
     /*
@@ -302,6 +326,12 @@ export class DeviceAuthService {
            */
           districtId: meta.districtId ?? null,
           reportedDistrict: meta.reportedDistrict ?? null,
+          /*
+           * ⚠️ Tur — plata aytgani yoki yukidan aniqlangani. Noma'lum bo'lsa
+           * `boiler` (eski proshivkalar turini aytmaydi); xona moduli keyingi
+           * signalidayoq o'z turiga o'tadi (`applyModuleType`).
+           */
+          moduleType: meta.moduleType ?? ModuleType.BOILER,
           firmwareVersion: meta.firmwareVersion ?? null,
           lastIpAddress: meta.ip?.slice(0, 45) ?? null,
           note: 'Avtomatik ro‘yxatga olindi (umumiy token)',
@@ -330,20 +360,88 @@ export class DeviceAuthService {
 
       return this.devices.findOne({
         where: { deviceId },
-        select: {
-          id: true,
-          deviceId: true,
-          apiKeyHash: true,
-          allowSharedToken: true,
-          institutionHint: true,
-          firmwareVersion: true,
-          boilerId: true,
-          isActive: true,
-          districtId: true,
-          reportedDistrict: true,
-        },
+        select: AUTH_SELECT,
       });
     }
+  }
+
+  /**
+   * MODUL TURINI YANGILASH — telemetriya va OTA uchun BITTA joy.
+   *
+   * ⚠️⚠️ «Bitta kotyolga bitta QOZONXONA moduli» (`UQ_devices_one_boiler_module`).
+   * Kotyolga ulangan xona moduli `boiler` ga o'tsa va o'sha kotyolda
+   * boshqa qozonxona moduli bo'lsa, yozuv unique indeksga urilardi —
+   * qurilma esa 500 olib, o'lchovni qayta-qayta yuborardi. Shuning uchun
+   * yozuv SHARTLI (`NOT EXISTS`) va to'qnashuvda tur O'ZGARMAYDI, faqat
+   * jurnalga yoziladi: kotyoldagi haqiqiy qozonxona moduli siqib
+   * chiqarilmasligi kerak.
+   *
+   * ⚠️ XATO YUTILADI: tur — yon ma'lumot, o'lchovni rad etmasligi kerak.
+   *
+   * @returns Tur haqiqatan o'zgardimi.
+   */
+  async applyModuleType(
+    device: AuthenticatedDevice,
+    next: ModuleType | null,
+  ): Promise<boolean> {
+    if (!next || device.moduleType === next) return false;
+    const previous = device.moduleType;
+
+    try {
+      const qb = this.devices
+        .createQueryBuilder()
+        .update(Device)
+        .set({ moduleType: next })
+        .where('id = :id', { id: device.id })
+        .andWhere('module_type = :previous', { previous });
+
+      if (next === ModuleType.BOILER && device.boilerId) {
+        qb.andWhere(
+          `NOT EXISTS (SELECT 1 FROM devices other
+             WHERE other.boiler_id = :boilerId
+               AND other.module_type = 'boiler'
+               AND other.id <> :id)`,
+          { boilerId: device.boilerId, id: device.id },
+        );
+      }
+
+      const result = await qb.execute();
+      if (!result.affected) {
+        if (next === ModuleType.BOILER && device.boilerId) {
+          this.logger.warn(
+            `Qurilma ${device.deviceId}: qozonxona moduli deb aytdi, lekin ` +
+              'ulangan kotyolda boshqa qozonxona moduli bor — tur o‘zgartirilmadi',
+          );
+        }
+        return false;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Qurilma ${device.deviceId}: modul turini yozib bo‘lmadi — ` +
+          (isUniqueViolation(error)
+            ? 'kotyolda boshqa qozonxona moduli bor'
+            : error instanceof Error
+              ? error.message
+              : String(error)),
+      );
+      return false;
+    }
+
+    device.moduleType = next;
+    this.logger.log(
+      `Qurilma ${device.deviceId}: modul turi ${previous} → ${next}`,
+    );
+    await this.audit
+      .log({
+        action: AuditAction.UPDATE,
+        entityName: 'Device',
+        entityId: device.id,
+        summary: `Modul ${device.deviceId} turi: ${previous} → ${next} (plata signali bo‘yicha)`,
+        before: { moduleType: previous },
+        after: { moduleType: next },
+      })
+      .catch(() => undefined);
+    return true;
   }
 
   /** `.env` dagi umumiy token (bo'sh bo'lsa — mexanizm o'chiq). */

@@ -96,8 +96,12 @@ export class BoilersService {
        * nechta qurilma bo'lishi mumkin va `LEFT JOIN` qatorlarni
        * ko'paytirib, `COUNT` ni buzardi.
        */
+      /*
+       * ⚠️ «Modulsiz» — QOZONXONA modulisiz. Xona moduli kotyol haroratini
+       * bermaydi: faqat xona moduli ulangan kotyol hamon «modul kerak».
+       */
       qb.andWhere(
-        'NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id)',
+        "NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.module_type = 'boiler')",
       );
     }
 
@@ -336,6 +340,9 @@ export class BoilersService {
         'device.name',
         'device.isActive',
         'device.lastSeenAt',
+        'device.moduleType',
+        'device.lastRoomTemperature',
+        'device.lastRoomReadingAt',
       ]);
 
     applyDistrictScope(qb, user, 'boiler.district_id');

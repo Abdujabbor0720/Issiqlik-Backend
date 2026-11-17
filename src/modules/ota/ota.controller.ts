@@ -21,12 +21,15 @@ import { ConfigService } from '@nestjs/config';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import type { ModuleType } from '../../common/constants/enums';
 import { Public } from '../../common/decorators/public.decorator';
+import { parseModuleType } from '../../helpers/device-profile.helper';
 import { RawResponse } from '../../common/decorators/raw-response.decorator';
 import {
   extractApiKey,
   extractDeviceId,
   extractFirmwareVersion,
+  extractModuleTypeHeader,
 } from '../telemetry/dto/ingest.dto';
 import { DeviceThrottlerGuard } from '../telemetry/device-throttler.guard';
 import type { OtaCheckResponse } from './ota.service';
@@ -100,7 +103,11 @@ export class OtaController {
         ctx.deviceId,
         ctx.token,
         this.trim(versionQuery) ?? ctx.firmwareVersion,
-        { ip: ctx.ip, firmwareVersion: ctx.firmwareVersion },
+        {
+          ip: ctx.ip,
+          firmwareVersion: ctx.firmwareVersion,
+          moduleType: ctx.moduleType,
+        },
       );
       this.sendFlatJson(res, result);
       return;
@@ -164,6 +171,7 @@ export class OtaController {
         ip: ctx.ip,
         firmwareVersion: ctx.firmwareVersion,
         institutionHint: this.asText(raw.institution_id),
+        moduleType: ctx.moduleType,
       },
     );
   }
@@ -190,7 +198,11 @@ export class OtaController {
       ctx.deviceId,
       ctx.token,
       this.trim(version),
-      { ip: ctx.ip, firmwareVersion: ctx.firmwareVersion },
+      {
+        ip: ctx.ip,
+        firmwareVersion: ctx.firmwareVersion,
+        moduleType: ctx.moduleType,
+      },
     );
 
     try {
@@ -306,6 +318,11 @@ export class OtaController {
       deviceId: extractDeviceId(headers) ?? this.trim(deviceIdFallback),
       token: extractApiKey(headers, {}, req.query),
       firmwareVersion: extractFirmwareVersion(headers),
+      /*
+       * ⚠️ `X-Module-Type` — xona moduli proshivkasi yuboradi (qozonxona
+       * proshivkasida YO'Q → `null`, tur bazadan olinadi).
+       */
+      moduleType: parseModuleType(extractModuleTypeHeader(headers)),
       ip: req.ip ?? req.socket.remoteAddress ?? null,
     };
   }
@@ -327,5 +344,6 @@ interface DeviceContext {
   deviceId: string | null;
   token: string | null;
   firmwareVersion: string | null;
+  moduleType: ModuleType | null;
   ip: string | null;
 }

@@ -71,6 +71,27 @@ export interface DistrictRecord {
 }
 
 /**
+ * XONA MODULI PROSHIVKASINING TUMAN KALITLARI → tizim kodi.
+ *
+ * ⚠️⚠️ ANIQ RO'YXAT, TAXMIN EMAS. Proshivka menyusi tumanni o'z kaliti
+ * bilan yuboradi (`andijon-sh`, `boston`). 13 tasi tizim kodi bilan AYNI,
+ * faqat shu uchtasi farq qiladi. Umumiy «qisqa nom» qoidasi KIRITILMAYDI
+ * (yuqoridagi izoh: «Andijon» ikki ma'noli) — faqat kelishilgan kalitlar.
+ *
+ * ⚠️ Solishtirish XOM qiymat bo'yicha (kichik harf, tutuq belgisi OLIB
+ * TASHLANMAYDI): «Bo'ston» deb qo'lda yozilgan qisqa nom avvalgidek rad
+ * etiladi, proshivka yuboradigan `boston` esa qabul qilinadi.
+ *
+ * ⚠️ `Map`, oddiy obyekt EMAS: `{}` da `"constructor"` kaliti prototipdan
+ * topilib, so'rov yiqilardi.
+ */
+export const FIRMWARE_DISTRICT_KEYS: ReadonlyMap<string, string> = new Map([
+  ['andijon-sh', 'andijon_sh'],
+  ['xonobod-sh', 'xonobod_sh'],
+  ['boston', 'boz'],
+]);
+
+/**
  * TUMANNI TOPISH.
  *
  * ⚠️ Har bosqichda faqat BITTA tuman mos kelsa qabul qilinadi; bir
@@ -83,6 +104,14 @@ export function matchDistrict(
 ): DistrictRecord | null {
   const ref = normalizeDistrictRef(raw);
   if (!ref) return null;
+
+  if (typeof raw === 'string') {
+    const code = FIRMWARE_DISTRICT_KEYS.get(raw.trim().toLowerCase());
+    if (code) {
+      const found = districts.filter((item) => item.code === code);
+      return found.length === 1 ? found[0] : null;
+    }
+  }
 
   const steps: Array<(item: DistrictRecord) => string | null> = [
     (item) => normalizeDistrictRef(item.soato),

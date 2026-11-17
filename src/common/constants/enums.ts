@@ -162,6 +162,25 @@ export enum RolloutStatus {
 }
 
 /**
+ * ESP32 MODULI TURI — qaysi apparat va qaysi proshivka oilasi.
+ *
+ * ⚠️⚠️ OTA XAVFSIZLIGINING ASOSI. Ikki oila bir xil OTA kontraktidan
+ * foydalanadi; qozonxona proshivkasi xona moduliga (yoki aksincha)
+ * yozilsa, plata noto'g'ri datchikni o'qib, «ishlayapti» deb tasdiqlab
+ * yuborardi — xato faqat dalada, qo'lda topilardi. Shuning uchun
+ * relizning turi `.bin` ICHIDAGI belgidan, qurilmaniki esa uning O'Z
+ * signalidan olinadi va OTA faqat bir xil tur orasida ishlaydi.
+ *
+ *   • `boiler` — qozonxona moduli (DS18B20, suv harorati). Eski
+ *     proshivkalar turini aytmaydi — ular shu tur deb olinadi.
+ *   • `room`   — xona harorati moduli (DHT22, faqat havo).
+ */
+export enum ModuleType {
+  BOILER = 'boiler',
+  ROOM = 'room',
+}
+
+/**
  * TARQATISH MAQSADI.
  *
  * ⚠️ `DISTRICTS` — viloyat miqyosi uchun eng muhim kesim. Texnik

@@ -7,10 +7,15 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AuditAction, UserRole } from '../../common/constants/enums';
+import {
+  AuditAction,
+  ModuleType,
+  UserRole,
+} from '../../common/constants/enums';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { Boiler } from '../../database/entities/boiler.entity';
+import { ObjectType } from '../../database/entities/catalog.entities';
 import { Device } from '../../database/entities/device.entity';
 import { assertDistrictAccess } from '../../helpers/scope.helper';
 import { AuditService } from '../audit/audit.service';
@@ -68,6 +73,17 @@ export class DevicesService {
         'deviceDistrict.name',
         'deviceDistrict.shortName',
       ])
+      /*
+       * ⚠️ Plata yuborgan obyekt turi KODI (`school`) — katalogdagi nom bilan
+       * ko'rsatiladi. Relatsiya EMAS (FK yo'q): kod platadan keladi va
+       * katalogda bo'lmasa ham saqlanadi — u holda xom kod ko'rinadi.
+       */
+      .leftJoinAndMapOne(
+        'device.reportedObjectTypeRef',
+        ObjectType,
+        'reportedType',
+        'reportedType.code = device.reported_object_type',
+      )
       .orderBy('device.lastSeenAt', 'DESC', 'NULLS LAST')
       .skip(query.skip)
       .take(query.limit);
@@ -109,9 +125,15 @@ export class DevicesService {
        * biriktirilmagan modul orasidan O'Z binosidagisini tuman mas'uli
        * aynan shu bo'yicha topadi: `esp32-a4cf12…` raqamini u bilmaydi.
        */
+      /*
+       * ⚠️ Plata aytgan muassasa nomi va MFY ham qidiriladi — xona
+       * modullari yuzlab bo'ladi va mas'ul ularni «12-maktab» bo'yicha
+       * topadi.
+       */
       qb.andWhere(
         '(device.device_id ILIKE :q OR device.name ILIKE :q ' +
-          'OR device.institution_hint ILIKE :q OR boiler.lot_number ILIKE :q)',
+          'OR device.institution_hint ILIKE :q OR boiler.lot_number ILIKE :q ' +
+          'OR device.reported_institution ILIKE :q OR device.reported_mfy ILIKE :q)',
         { q: `%${query.search}%` },
       );
     }
@@ -119,6 +141,11 @@ export class DevicesService {
       qb.andWhere('device.is_active = :isActive', { isActive: query.isActive });
     }
     if (query.unassigned) qb.andWhere('device.boiler_id IS NULL');
+    if (query.moduleType) {
+      qb.andWhere('device.module_type = :moduleType', {
+        moduleType: query.moduleType,
+      });
+    }
     if (query.offline) {
       qb.andWhere(
         '(device.last_seen_at IS NULL OR device.last_seen_at < :offlineBefore)',
@@ -311,6 +338,7 @@ export class DevicesService {
           actor,
           id,
           device.districtId,
+          device.moduleType,
         );
       device.boilerId = dto.boilerId || null;
     }
@@ -390,6 +418,7 @@ export class DevicesService {
     actor: AuthUser,
     exceptDeviceId?: string,
     deviceDistrictId?: string | null,
+    moduleType: ModuleType = ModuleType.BOILER,
   ): Promise<void> {
     const boiler = await this.boilers.findOne({
       where: { id: boilerId },
@@ -417,21 +446,33 @@ export class DevicesService {
     }
 
     /*
-     * ⚠️ BITTA KOTYOLGA BITTA MODUL. Ikkita modul ulansa, ularning
-     * o'lchovlari navbatma-navbat kelib, kotyol holati har 30 soniyada
-     * sakrab turardi — qaysi biri haqiqat ekanini hech kim bilmasdi.
-     * Bir nechta modul kerak bo'lsa, ular alohida kotyol yozuvi bo'ladi.
+     * ⚠️ BITTA KOTYOLGA BITTA QOZONXONA MODULI. Ikkita qozonxona moduli
+     * ulansa, ularning o'lchovlari navbatma-navbat kelib, kotyol holati har
+     * 30 soniyada sakrab turardi — qaysi biri haqiqat ekanini hech kim
+     * bilmasdi. Bir nechta modul kerak bo'lsa, ular alohida kotyol yozuvi
+     * bo'ladi.
+     *
+     * ⚠️ XONA MODULI bu qoidaga KIRMAYDI: u kotyol holatiga tegmaydi, faqat
+     * binodagi xona haroratini beradi — bitta maktabda ular bir nechta
+     * (har sinfga bittadan). Bazada ham shunday (`UQ_devices_one_boiler_module`).
      */
+    if (moduleType === ModuleType.ROOM) return;
+
     const qb = this.repo
       .createQueryBuilder('device')
-      .where('device.boiler_id = :boilerId', { boilerId });
+      .where('device.boiler_id = :boilerId', { boilerId })
+      .andWhere('device.module_type = :boilerType', {
+        boilerType: ModuleType.BOILER,
+      });
     if (exceptDeviceId) {
       qb.andWhere('device.id <> :exceptDeviceId', { exceptDeviceId });
     }
     const busy = await qb.getOne();
     if (busy) {
       throw new ConflictException(
-        `Bu kotyolga «${busy.deviceId}» moduli allaqachon biriktirilgan`,
+        `Bu kotyolga «${busy.deviceId}» qozonxona moduli allaqachon biriktirilgan. ` +
+          'Xona moduli bo‘lsa — u avval serverga signal yuborsin: turi platadan ' +
+          'avtomatik aniqlanadi va keyin biriktirish mumkin',
       );
     }
   }

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -9,6 +10,7 @@ import {
   MaxLength,
   IsUUID,
 } from 'class-validator';
+import { ModuleType } from '../../../common/constants/enums';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { toOptionalBoolean, trim } from '../../../common/dto/transforms';
 
@@ -102,4 +104,10 @@ export class DeviceQueryDto extends PaginationDto {
   @IsUUID('4')
   @IsOptional()
   districtId?: string;
+
+  /** Faqat shu turdagi modullar (`boiler` — qozonxona, `room` — xona). */
+  @ApiPropertyOptional({ enum: ModuleType })
+  @IsEnum(ModuleType)
+  @IsOptional()
+  moduleType?: ModuleType;
 }

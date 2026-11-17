@@ -1,7 +1,9 @@
 import { Exclude } from 'class-transformer';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
+import { ModuleType } from '../../common/constants/enums';
 import { BaseEntity } from './base.entity';
 import { Boiler } from './boiler.entity';
+import { numericTransformer } from './column-transformers';
 import { District } from './district.entity';
 
 /**
@@ -198,4 +200,92 @@ export class Device extends BaseEntity {
    */
   @Column({ type: 'timestamptz', name: 'token_issued_at', nullable: true })
   tokenIssuedAt!: Date | null;
+
+  // ───────────────── Xona moduli (DHT22) ─────────────────
+
+  /**
+   * MODUL TURI — PLATA O'ZI AYTADI (`X-Module-Type` / `module_type`), aytmasa
+   * — yukining shaklidan: faqat xona harorati yuboradigan plata `room`.
+   *
+   * ⚠️⚠️ OTA shu maydon bo'yicha ajratiladi: `boiler` relizi faqat `boiler`
+   * modullariga, `room` relizi faqat `room` modullariga. Kabinetda
+   * o'zgartirilmaydi — aks holda bitta bosish qozonxona proshivkasini xona
+   * moduliga yo'llab yuborardi.
+   */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    name: 'module_type',
+    default: ModuleType.BOILER,
+  })
+  moduleType!: ModuleType;
+
+  /**
+   * PLATA AYTGAN JOYLASHUV — FAQAT KO'RSATISH UCHUN (`institutionHint` bilan
+   * AYNI doktrina). Montajchi plata menyusida tanlaydi; tuman mas'uli
+   * yuzlab biriktirilmagan modul orasidan O'Z binosidagisini shular bo'yicha
+   * topadi. Ma'lumot yo'naltirishda ISHLATILMAYDI.
+   *
+   * ⚠️ Kelmagan maydon O'CHIRILMAYDI — oxirgi ma'lum qiymat qoladi.
+   */
+  @Column({
+    type: 'varchar',
+    length: 120,
+    name: 'reported_mfy',
+    nullable: true,
+  })
+  reportedMfy!: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 120,
+    name: 'reported_institution',
+    nullable: true,
+  })
+  reportedInstitution!: string | null;
+
+  /** «Kataloglar → Obyekt turlari» kodi (`school`), xom ko'rinishda. */
+  @Column({
+    type: 'varchar',
+    length: 32,
+    name: 'reported_object_type',
+    nullable: true,
+  })
+  reportedObjectType!: string | null;
+
+  /**
+   * OXIRGI XONA HARORATI — QURILMA darajasida.
+   *
+   * ⚠️ Xona yozuvi (`rooms`) faqat kotyolga BIRIKTIRILGAN modulda yaratiladi
+   * (xona binoga tegishli). Biriktirilmagan modul ham «tirik va nimani
+   * o'lchayapti» ekani ko'rinishi kerak — aks holda montajchi uni qaysi
+   * binoga ulashni tekshira olmasdi.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    name: 'last_room_temperature',
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  lastRoomTemperature!: number | null;
+
+  /** Havo namligi, % (DHT22). Yuborilmasa `null`. */
+  @Column({
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    name: 'last_humidity',
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  lastHumidity!: number | null;
+
+  @Column({
+    type: 'timestamptz',
+    name: 'last_room_reading_at',
+    nullable: true,
+  })
+  lastRoomReadingAt!: Date | null;
 }

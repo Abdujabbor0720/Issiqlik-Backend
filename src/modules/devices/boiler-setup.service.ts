@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { AuditAction } from '../../common/constants/enums';
+import { AuditAction, ModuleType } from '../../common/constants/enums';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { Boiler } from '../../database/entities/boiler.entity';
@@ -89,6 +89,17 @@ export class BoilerSetupService {
       if (!existing.isActive) {
         throw new BadRequestException(
           `«${existing.deviceId}» moduli o‘chirilgan — avval uni yoqing`,
+        );
+      }
+      /*
+       * ⚠️ Kotyolning O'Z moduli — suv haroratini beradigani. Xona moduli
+       * bu o'ringa qo'yilsa, kotyol «modulli» ko'rinib, aslida hech qachon
+       * harorat kelmasdi. Xona moduli binoga «ESP32 modullari» dan ulanadi.
+       */
+      if (existing.moduleType === ModuleType.ROOM) {
+        throw new BadRequestException(
+          `«${existing.deviceId}» — xona moduli, u kotyol haroratini bermaydi. ` +
+            'Uni «ESP32 modullari» sahifasidan shu binoga biriktiring',
         );
       }
       /*
