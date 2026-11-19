@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { AuditAction, ModuleType } from '../../common/constants/enums';
+import { AuditAction, DeviceType } from '../../common/constants/enums';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { Boiler } from '../../database/entities/boiler.entity';
@@ -23,6 +23,7 @@ import { BoilersService } from '../boilers/boilers.service';
 import { DevicesService } from './devices.service';
 import { BoilerSetupDto, SetupDeviceMode } from './dto/boiler-setup.dto';
 import { PendingDevicesService } from './pending-devices.service';
+import { DistrictDirectoryService } from '../geo/district-directory.service';
 
 export interface BoilerSetupResult {
   boiler: Boiler;
@@ -61,6 +62,7 @@ export class BoilerSetupService {
     private readonly devices: DevicesService,
     private readonly pending: PendingDevicesService,
     private readonly audit: AuditService,
+    private readonly districts: DistrictDirectoryService,
   ) {}
 
   async setup(
@@ -96,7 +98,7 @@ export class BoilerSetupService {
        * bu o'ringa qo'yilsa, kotyol «modulli» ko'rinib, aslida hech qachon
        * harorat kelmasdi. Xona moduli binoga «ESP32 modullari» dan ulanadi.
        */
-      if (existing.moduleType === ModuleType.ROOM) {
+      if (existing.deviceType === DeviceType.XONA) {
         throw new BadRequestException(
           `«${existing.deviceId}» — xona moduli, u kotyol haroratini bermaydi. ` +
             'Uni «ESP32 modullari» sahifasidan shu binoga biriktiring',
@@ -111,8 +113,8 @@ export class BoilerSetupService {
         existing.districtId !== dto.boiler.districtId
       ) {
         throw new BadRequestException(
-          `«${existing.deviceId}» moduli platada «${existing.district?.name ?? 'boshqa'}» ` +
-            'tumaniga sozlangan — kotyol ham shu tumanda bo‘lishi kerak',
+          `«${existing.deviceId}» moduli «${existing.district?.name ?? 'boshqa'}» ` +
+            'tumaniga biriktirilgan — kotyol ham shu tumanda bo‘lishi kerak',
         );
       }
     } else if (dto.device.mode === SetupDeviceMode.NEW) {
@@ -120,6 +122,12 @@ export class BoilerSetupService {
         deviceId: dto.device.deviceId as string,
         name: dto.device.name,
       });
+    }
+
+    const districtKey =
+      (await this.districts.byId(dto.boiler.districtId))?.key ?? null;
+    if (dto.newOrganizationName && !districtKey) {
+      throw new BadRequestException('Kotyol tumani topilmadi');
     }
 
     // ───────── Yozish — BITTA tranzaksiya ─────────
@@ -133,10 +141,15 @@ export class BoilerSetupService {
           let created = false;
 
           if (dto.newOrganizationName) {
+            /*
+             * ⚠️ Muassasa katalogi TUMAN ICHIDA: «12-maktab» har tumanda
+             * bor va boshqa tumandagi yozuvga bog'lanib qolmasligi kerak.
+             */
             const found = await manager
               .getRepository(Organization)
               .createQueryBuilder('org')
-              .where('LOWER(org.name) = LOWER(:name)', {
+              .where('org.district_key = :districtKey', { districtKey })
+              .andWhere('LOWER(org.name) = LOWER(:name)', {
                 name: dto.newOrganizationName,
               })
               .getOne();
@@ -159,6 +172,7 @@ export class BoilerSetupService {
                 .save(
                   manager.getRepository(Organization).create({
                     name: dto.newOrganizationName,
+                    districtKey,
                     objectTypeId: dto.newOrganizationTypeId ?? null,
                     note: null,
                     phone: null,

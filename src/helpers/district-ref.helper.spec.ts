@@ -1,17 +1,44 @@
 import {
   extractDistrictRef,
   matchDistrict,
+  matchDistrictName,
   normalizeDistrictRef,
   type DistrictRecord,
 } from './district-ref.helper';
 
 /** Prod bazasidagi bilan AYNI (andijon-districts.geojson). */
 const DISTRICTS: DistrictRecord[] = [
-  { id: 'city', code: 'andijon_sh', soato: '1703401', name: 'Andijon shahri' },
-  { id: 'rayon', code: 'andijon', soato: '1703203', name: 'Andijon tumani' },
-  { id: 'boston', code: 'boz', soato: '1703212', name: 'Bo‘ston tumani' },
+  {
+    id: 'city',
+    key: 'andijon-sh',
+    code: 'andijon_sh',
+    soato: '1703401',
+    name: 'Andijon shahri',
+  },
+  {
+    id: 'rayon',
+    key: 'andijon',
+    code: 'andijon',
+    soato: '1703203',
+    name: 'Andijon tumani',
+  },
+  {
+    id: 'boston',
+    key: 'boz',
+    code: 'boz',
+    soato: '1703212',
+    name: 'Bo‘ston tumani',
+  },
+  {
+    id: 'xonobod',
+    key: 'xonobod-sh',
+    code: 'xonobod_sh',
+    soato: '1703405',
+    name: 'Xonobod shahri',
+  },
   {
     id: 'qorgon',
+    key: 'qorgontepa',
     code: 'qorgontepa',
     soato: '1703227',
     name: 'Qo‘rg‘ontepa tumani',
@@ -88,9 +115,34 @@ describe('matchDistrict', () => {
   it('⚠️ noaniq (ikki tuman mos) — null', () => {
     const twins = [
       ...DISTRICTS,
-      { id: 'twin', code: 'twin', soato: '1703401', name: 'Egizak' },
+      {
+        id: 'twin',
+        key: 'twin',
+        code: 'twin',
+        soato: '1703401',
+        name: 'Egizak',
+      },
     ];
     expect(matchDistrict('1703401', twins)).toBeNull();
+  });
+});
+
+describe('matchDistrict — proshivka kalitlari (kotyol v2.1.0, xona v1.1.0)', () => {
+  it.each([
+    ['andijon-sh', 'city'],
+    ['xonobod-sh', 'xonobod'],
+    ['boz', 'boston'],
+    ['qorgontepa', 'qorgon'],
+    ['andijon', 'rayon'],
+    // ⚠️ Katta harf yoki bo'shliq — proshivka yubormaydi, lekin zarar ham yo'q.
+    [' ASAKA-YOQ ', null],
+  ])('%p → %p', (raw, expected) => {
+    expect(matchDistrict(raw, DISTRICTS)?.id ?? null).toBe(expected);
+  });
+
+  it('⚠️ noma‘lum kalit — null (so‘rov rad etilmaydi, maydon e‘tiborsiz)', () => {
+    expect(matchDistrict('toshkent', DISTRICTS)).toBeNull();
+    expect(matchDistrict('constructor', DISTRICTS)).toBeNull();
   });
 });
 
@@ -108,5 +160,28 @@ describe('extractDistrictRef', () => {
     expect(
       extractDistrictRef({ device_id: 'x', temperature_c: 60 }),
     ).toBeUndefined();
+  });
+});
+
+describe('matchDistrictName — MFY fayli', () => {
+  it.each([
+    ['Andijon shahri', 'city'],
+    ['Andijon sh.', 'city'],
+    ['Andijon tumani', 'rayon'],
+    ["Bo'ston tumani", 'boston'],
+    ["Bo'z tumani", 'boston'],
+    ['Xonobod shahri', 'xonobod'],
+    ['Qo‘rg‘ontepa tumani', 'qorgon'],
+    ['xonobod-sh', 'xonobod'],
+  ])('%p → %p', (raw, expected) => {
+    expect(matchDistrictName(raw, DISTRICTS)?.id ?? null).toBe(expected);
+  });
+
+  it('qo‘shimchasiz «andijon» — proshivka kaliti, ya‘ni Andijon TUMANI', () => {
+    expect(matchDistrictName('Andijon', DISTRICTS)?.id ?? null).toBe('rayon');
+  });
+
+  it('noma‘lum — null', () => {
+    expect(matchDistrictName('Toshkent tumani', DISTRICTS)).toBeNull();
   });
 });

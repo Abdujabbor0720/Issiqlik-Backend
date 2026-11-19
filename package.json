@@ -1,7 +1,7 @@
 {
   "name": "issiqlik-backend",
   "version": "1.0.0",
-  "description": "Issiqlik — hududiy qozonxonalarni (kotyollarni) real vaqtda monitoring qilish tizimi",
+  "description": "Andijon viloyati issiqlik monitoring tizimi — qozonxonalar va xona haroratini real vaqtda kuzatish (backend)",
   "author": "",
   "private": true,
   "license": "UNLICENSED",
@@ -34,6 +34,8 @@
     "simulate": "ts-node -r tsconfig-paths/register scripts/simulate-devices.ts",
     "demo:feed": "ts-node -r tsconfig-paths/register scripts/demo-feed.ts",
     "import:qozonxona": "node dist/scripts/import-qozonxonalar.js",
+    "import:mfy": "node dist/scripts/import-mfy.js",
+    "import:mfy:dev": "ts-node -r tsconfig-paths/register src/scripts/import-mfy.ts",
     "pg:init": "bash scripts/pg-local.sh init",
     "pg:start": "bash scripts/pg-local.sh start",
     "pg:stop": "bash scripts/pg-local.sh stop",

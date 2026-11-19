@@ -1,21 +1,26 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AuditAction } from '../../common/constants/enums';
+import { AuditAction, UserRole } from '../../common/constants/enums';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { Boiler } from '../../database/entities/boiler.entity';
 import {
   BoilerBrand,
   Firm,
+  Mahalla,
   ObjectType,
   Organization,
 } from '../../database/entities/catalog.entities';
+import { isUniqueViolation } from '../../helpers/db-errors.helper';
 import { AuditService } from '../audit/audit.service';
+import { DistrictDirectoryService } from '../geo/district-directory.service';
+import { ObjectTypeDirectoryService } from '../geo/object-type-directory.service';
 import type {
   CatalogQueryDto,
   CreateCatalogItemDto,
@@ -23,9 +28,11 @@ import type {
 } from './dto/catalog.dto';
 
 /** URL dagi katalog nomi → repozitoriy va kotyoldagi ustun. */
-export type CatalogKind = 'brands' | 'firms' | 'organizations' | 'object-types';
+export type CatalogKind =
+  'brands' | 'firms' | 'organizations' | 'object-types' | 'mahallas';
 
-type CatalogEntityUnion = BoilerBrand | Firm | Organization | ObjectType;
+type CatalogEntityUnion =
+  BoilerBrand | Firm | Organization | ObjectType | Mahalla;
 
 interface CatalogMeta {
   repo: Repository<CatalogEntityUnion>;
@@ -44,7 +51,9 @@ interface CatalogMeta {
    * ustun jadvalda bor, qiymat esa doim «—». Xato ko'rinmas edi —
    * so'rov muvaffaqiyatli, maydon shunchaki bo'sh.
    */
-  relation?: { property: string; alias: string; columns: string[] };
+  relations?: Array<{ property: string; alias: string; columns: string[] }>;
+  /** Tumanga tegishli katalog (`district_key` ustuni bor). */
+  districtScoped?: boolean;
   label: string;
   entityName: string;
 }
@@ -58,8 +67,11 @@ export class CatalogsService {
     @InjectRepository(Firm) firms: Repository<Firm>,
     @InjectRepository(Organization) organizations: Repository<Organization>,
     @InjectRepository(ObjectType) objectTypes: Repository<ObjectType>,
+    @InjectRepository(Mahalla) mahallas: Repository<Mahalla>,
     @InjectRepository(Boiler) private readonly boilers: Repository<Boiler>,
     private readonly audit: AuditService,
+    private readonly districts: DistrictDirectoryService,
+    private readonly objectTypeDirectory: ObjectTypeDirectoryService,
   ) {
     /*
      * ⚠️ TO'RTTA katalog BITTA servis bilan boshqariladi. Ularning qoidasi
@@ -84,12 +96,20 @@ export class CatalogsService {
       organizations: {
         repo: organizations,
         boilerColumn: 'organization_id',
-        relation: {
-          property: 'item.objectType',
-          alias: 'objectType',
-          columns: ['objectType.id', 'objectType.name', 'objectType.code'],
-        },
-        label: 'Tashkilot',
+        relations: [
+          {
+            property: 'item.objectType',
+            alias: 'objectType',
+            columns: ['objectType.id', 'objectType.name', 'objectType.code'],
+          },
+          {
+            property: 'item.mahalla',
+            alias: 'mahalla',
+            columns: ['mahalla.id', 'mahalla.name'],
+          },
+        ],
+        districtScoped: true,
+        label: 'Muassasa',
         entityName: 'Organization',
       },
       /*
@@ -105,12 +125,25 @@ export class CatalogsService {
         label: 'Obyekt turi',
         entityName: 'ObjectType',
       },
+      mahallas: {
+        repo: mahallas,
+        boilerColumn: null,
+        usedBy: { table: 'organizations', column: 'mahalla_id' },
+        districtScoped: true,
+        label: 'MFY',
+        entityName: 'Mahalla',
+      },
     };
   }
 
+  /**
+   * ⚠️ Tumanga tegishli kataloglarda (muassasa, MFY) TUMAN MAS'ULI faqat o'z
+   * tumanini ko'radi — API darajasida (`districtKey` filtri majburlanadi).
+   */
   async list(
     kind: CatalogKind,
     query: CatalogQueryDto,
+    user?: AuthUser,
   ): Promise<PaginatedResult<CatalogEntityUnion>> {
     const meta = this.resolve(kind);
     const qb = meta.repo
@@ -119,10 +152,26 @@ export class CatalogsService {
       .skip(query.skip)
       .take(query.limit);
 
-    if (meta.relation) {
-      qb.leftJoin(meta.relation.property, meta.relation.alias).addSelect(
-        meta.relation.columns,
+    for (const relation of meta.relations ?? []) {
+      qb.leftJoin(relation.property, relation.alias).addSelect(
+        relation.columns,
       );
+    }
+
+    if (meta.districtScoped) {
+      let districtKey = query.districtKey;
+      if (user?.role === UserRole.OPERATOR) {
+        const own = await this.districts.byId(user.districtId);
+        districtKey = own?.key ?? '__none__';
+      }
+      if (districtKey) {
+        qb.andWhere('item.district_key = :districtKey', { districtKey });
+      }
+    }
+    if (kind === 'organizations' && query.objectTypeId) {
+      qb.andWhere('item.object_type_id = :objectTypeId', {
+        objectTypeId: query.objectTypeId,
+      });
     }
 
     if (!query.includeArchived) {
@@ -142,8 +191,10 @@ export class CatalogsService {
     actor: AuthUser,
   ): Promise<CatalogEntityUnion> {
     const { repo, label, entityName } = this.resolve(kind);
-    const entity = repo.create(this.pickFields(kind, dto));
-    const saved = await repo.save(entity);
+    const fields = this.pickFields(kind, dto);
+    await this.validateLocationFields(kind, fields, true);
+    const saved = await this.saveUnique(repo, repo.create(fields), label);
+    if (kind === 'object-types') this.objectTypeDirectory.invalidate();
 
     await this.audit.log({
       actor,
@@ -166,10 +217,13 @@ export class CatalogsService {
     if (!entity) throw new NotFoundException(`${label} topilmadi`);
 
     const before = { name: entity.name, isArchived: entity.isArchived };
-    Object.assign(entity, this.pickFields(kind, dto));
+    const fields = this.pickFields(kind, dto);
+    await this.validateLocationFields(kind, { ...entity, ...fields }, false);
+    Object.assign(entity, fields);
     if (dto.isArchived !== undefined) entity.isArchived = dto.isArchived;
 
-    const saved = await repo.save(entity);
+    const saved = await this.saveUnique(repo, entity, label);
+    if (kind === 'object-types') this.objectTypeDirectory.invalidate();
     await this.audit.log({
       actor,
       action: AuditAction.UPDATE,
@@ -232,6 +286,54 @@ export class CatalogsService {
     return Number(rows[0]?.count ?? 0);
   }
 
+  /** Tuman ichida takror nom — 409 (500 emas). */
+  private async saveUnique(
+    repo: Repository<CatalogEntityUnion>,
+    entity: CatalogEntityUnion,
+    label: string,
+  ): Promise<CatalogEntityUnion> {
+    try {
+      return await repo.save(entity);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException(
+          `Bunday nomli ${label.toLowerCase()} allaqachon bor`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * MUASSASA / MFY JOYLASHUVI.
+   * ⚠️ MFY — tumanning birligi: muassasaning MFYsi uning o'z tumanidan
+   * bo'lishi SHART (aks holda «Asaka tumanidagi maktab, Xonobod MFYsi»).
+   */
+  private async validateLocationFields(
+    kind: CatalogKind,
+    fields: Record<string, unknown>,
+    creating: boolean,
+  ): Promise<void> {
+    if (kind !== 'organizations' && kind !== 'mahallas') return;
+    const districtKey = fields.districtKey as string | null | undefined;
+    if (kind === 'mahallas' && creating && !districtKey) {
+      throw new BadRequestException('MFY uchun tuman tanlanishi shart');
+    }
+    if (districtKey && !(await this.districts.byKey(districtKey))) {
+      throw new BadRequestException(`Noma‘lum tuman kaliti: ${districtKey}`);
+    }
+    const mahallaId = fields.mahallaId as string | null | undefined;
+    if (kind === 'organizations' && mahallaId) {
+      const mahalla = await this.meta.mahallas.repo.findOne({
+        where: { id: mahallaId },
+      });
+      if (!mahalla) throw new BadRequestException('MFY topilmadi');
+      if ((mahalla as Mahalla).districtKey !== districtKey) {
+        throw new BadRequestException('MFY muassasa tumaniga tegishli emas');
+      }
+    }
+  }
+
   private resolve(kind: CatalogKind): CatalogMeta {
     const meta = this.meta[kind];
     if (!meta) throw new NotFoundException('Bunday katalog mavjud emas');
@@ -250,7 +352,8 @@ export class CatalogsService {
   ): Record<string, unknown> {
     const base: Record<string, unknown> = {};
     if (dto.name !== undefined) base.name = dto.name;
-    if (dto.note !== undefined) base.note = dto.note;
+    // ⚠️ MFYda `note` ustuni yo'q.
+    if (dto.note !== undefined && kind !== 'mahallas') base.note = dto.note;
 
     if (kind === 'brands') {
       if (dto.country !== undefined) base.country = dto.country;
@@ -263,6 +366,11 @@ export class CatalogsService {
     if (kind === 'organizations') {
       if (dto.objectTypeId !== undefined) base.objectTypeId = dto.objectTypeId;
       if (dto.phone !== undefined) base.phone = dto.phone;
+      if (dto.districtKey !== undefined) base.districtKey = dto.districtKey;
+      if (dto.mahallaId !== undefined) base.mahallaId = dto.mahallaId;
+    }
+    if (kind === 'mahallas') {
+      if (dto.districtKey !== undefined) base.districtKey = dto.districtKey;
     }
     if (kind === 'object-types') {
       /*

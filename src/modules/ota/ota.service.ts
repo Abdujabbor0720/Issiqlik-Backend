@@ -8,10 +8,9 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
-  ModuleType,
+  DeviceType,
   OtaEventStatus,
   RolloutStatus,
-  RolloutTargetType,
 } from '../../common/constants/enums';
 import { Device } from '../../database/entities/device.entity';
 import {
@@ -25,6 +24,7 @@ import type {
   DeviceRequestMeta,
 } from '../devices/device-auth.service';
 import { DeviceAuthService } from '../devices/device-auth.service';
+import { applyRolloutTarget } from './rollout-target';
 
 /**
  * QURILMAGA QAYTADIGAN JAVOB — TEKIS obyekt.
@@ -107,7 +107,10 @@ export class OtaService {
   ): Promise<OtaCheckResponse> {
     const { device } = await this.auth.authenticate(deviceId, token, meta);
     // ⚠️ Plata `X-Module-Type` ni aytgan bo'lsa — tur DARHOL yangilanadi.
-    await this.auth.applyModuleType(device, meta.moduleType ?? null);
+    await this.auth.applyDeviceType(device, {
+      declared: meta.deviceType ?? null,
+      inferred: null,
+    });
 
     /*
      * ⚠️ §5: «Har bir so'rovda devices.firmware_version, last_check_at
@@ -127,16 +130,16 @@ export class OtaService {
      * ⚠️⚠️ FAQAT QURILMANING O'Z TURIDAGI tarqatish. Qozonxona proshivkasi
      * xona moduliga (yoki aksincha) HECH QACHON taklif qilinmaydi.
      */
-    const rollout = await this.activeRollout(device.moduleType);
+    const rollout = await this.activeRollout(device.deviceType);
     if (!rollout) return { update: false };
 
     const release = rollout.release;
     if (!release || release.isArchived) return { update: false };
     // ⚠️ Ikkinchi qavat: tarqatish yozuvi va relizning turi ham mos bo'lsin.
-    if (release.moduleType !== device.moduleType) {
+    if (release.deviceType !== device.deviceType) {
       this.logger.error(
-        `Tarqatish ${rollout.id}: reliz turi (${release.moduleType}) ` +
-          `qurilma turiga (${device.moduleType}) mos emas — taklif qilinmadi`,
+        `Tarqatish ${rollout.id}: reliz turi (${release.deviceType}) ` +
+          `qurilma turiga (${device.deviceType}) mos emas — taklif qilinmadi`,
       );
       return { update: false };
     }
@@ -216,7 +219,10 @@ export class OtaService {
     meta: DeviceRequestMeta,
   ): Promise<{ release: FirmwareRelease; releaseSlot: () => void }> {
     const { device } = await this.auth.authenticate(deviceId, token, meta);
-    await this.auth.applyModuleType(device, meta.moduleType ?? null);
+    await this.auth.applyDeviceType(device, {
+      declared: meta.deviceType ?? null,
+      inferred: null,
+    });
 
     if (!version) {
       throw new NotFoundException('Versiya ko‘rsatilmagan');
@@ -228,7 +234,7 @@ export class OtaService {
      * berilmaydi.
      */
     const release = await this.releases.findOne({
-      where: { version, moduleType: device.moduleType },
+      where: { version, deviceType: device.deviceType },
     });
     if (!release || release.isArchived) {
       throw new NotFoundException('Bunday proshivka versiyasi yo‘q');
@@ -240,7 +246,7 @@ export class OtaService {
      * qurilmaning tokeni bilan har qanday proshivkani yuklab olib,
      * ichidan boshqa maxfiy ma'lumotni ajratib olish mumkin bo'lardi.
      */
-    const rollout = await this.activeRollout(device.moduleType);
+    const rollout = await this.activeRollout(device.deviceType);
     const allowed =
       rollout !== null &&
       rollout.release?.version === version &&
@@ -315,7 +321,10 @@ export class OtaService {
     meta: DeviceRequestMeta,
   ): Promise<{ ok: true }> {
     const { device } = await this.auth.authenticate(deviceId, token, meta);
-    await this.auth.applyModuleType(device, meta.moduleType ?? null);
+    await this.auth.applyDeviceType(device, {
+      declared: meta.deviceType ?? null,
+      inferred: null,
+    });
 
     const status = this.parseStatus(body.status);
     if (!status) {
@@ -360,7 +369,7 @@ export class OtaService {
          * sog'lom qurilma abadiy bloklanib qolardi.
          */
         if (target) await this.clearFailures(device.id, target);
-        await this.finishRolloutIfComplete(device.moduleType);
+        await this.finishRolloutIfComplete(device.deviceType);
         break;
 
       case OtaEventStatus.FAILED:
@@ -413,68 +422,29 @@ export class OtaService {
    * «qaysi birini tanlash» muammosi YO'Q.
    */
   private async activeRollout(
-    moduleType: ModuleType,
+    deviceType: DeviceType,
   ): Promise<FirmwareRollout | null> {
     return this.rollouts.findOne({
-      where: { status: RolloutStatus.ACTIVE, moduleType },
+      where: { status: RolloutStatus.ACTIVE, deviceType },
       relations: { release: true },
     });
   }
 
   /**
-   * QURILMA TARQATISH MAQSADIGA KIRADIMI.
-   *
-   * ⚠️⚠️ Tuman va obyekt turi QURILMADAN emas, KOTYOLDAN olinadi:
-   * `devices → boilers → organizations → object_types`. Qurilmaning
-   * o'zida joy ma'lumoti YO'Q (identifikator MAC'dan olingan) va
-   * `institution_hint` ga ISHONILMAYDI (§3) — u qurilma AYTGAN
-   * qiymat, biz BILGAN qiymat emas.
-   *
-   * ⚠️ Kotyolga biriktirilmagan qurilma faqat `all` va `devices`
-   * maqsadiga tushadi: tumani ham, turi ham noma'lum. Busiz
-   * «Jalaquduq tumaniga tarqat» buyrug'i ombordagi platalarga ham
-   * tegib ketardi.
+   * Qurilma tarqatish maqsadiga kiradimi — `applyRolloutTarget` (yagona
+   * qoida) bilan, shu qurilmaga cheklangan so'rov orqali.
    */
   private async isTargeted(
     device: AuthenticatedDevice,
     rollout: FirmwareRollout,
   ): Promise<boolean> {
-    const ids = rollout.targetIds ?? [];
-
-    // ⚠️ Boshqa turdagi modul HECH QAYSI maqsadga kirmaydi («hammasi» ham).
-    if (device.moduleType !== rollout.moduleType) return false;
-
-    if (rollout.targetType === RolloutTargetType.ALL) return true;
-
-    if (rollout.targetType === RolloutTargetType.DEVICES) {
-      return ids.includes(device.id);
-    }
-
-    if (!device.boilerId) return false;
-
-    const row = await this.devices
+    if (device.deviceType !== rollout.deviceType) return false;
+    const qb = this.devices
       .createQueryBuilder('device')
-      .select('boiler.district_id', 'districtId')
-      .addSelect('organization.object_type_id', 'objectTypeId')
-      .innerJoin('boilers', 'boiler', 'boiler.id = device.boiler_id')
-      .leftJoin(
-        'organizations',
-        'organization',
-        'organization.id = boiler.organization_id',
-      )
-      .where('device.id = :id', { id: device.id })
-      .getRawOne<{ districtId: string | null; objectTypeId: string | null }>();
-
-    if (!row) return false;
-
-    if (rollout.targetType === RolloutTargetType.DISTRICTS) {
-      return row.districtId !== null && ids.includes(row.districtId);
-    }
-    if (rollout.targetType === RolloutTargetType.OBJECT_TYPES) {
-      return row.objectTypeId !== null && ids.includes(row.objectTypeId);
-    }
-
-    return false;
+      .select('device.id', 'id')
+      .where('device.id = :id', { id: device.id });
+    if (!applyRolloutTarget(qb, rollout)) return false;
+    return (await qb.getRawOne<{ id: string }>()) !== undefined;
   }
 
   private async isBlocked(
@@ -611,8 +581,8 @@ export class OtaService {
    * `active` qolib, bir vaqtda bitta faol tarqatish qoidasi tufayli
    * keyingi versiyani tarqatishga YO'L BERMASDI.
    */
-  private async finishRolloutIfComplete(moduleType: ModuleType): Promise<void> {
-    const rollout = await this.activeRollout(moduleType);
+  private async finishRolloutIfComplete(deviceType: DeviceType): Promise<void> {
+    const rollout = await this.activeRollout(deviceType);
     if (!rollout?.release) return;
 
     const version = rollout.release.version;
@@ -638,49 +608,11 @@ export class OtaService {
     );
   }
 
-  /** Tarqatish maqsadiga kiradigan qurilmalarning UUID lari. */
   private async targetDeviceIds(rollout: FirmwareRollout): Promise<string[]> {
-    const ids = rollout.targetIds ?? [];
-
     const qb = this.devices
       .createQueryBuilder('device')
-      .select('device.id', 'id')
-      /*
-       * ⚠️ Faolsizlantirilgan qurilma hisobga olinmaydi: u yangilanmaydi
-       * va tarqatishni abadiy «tugamagan» holda ushlab turardi. Boshqa
-       * turdagi modul ham — u bu relizni HECH QACHON olmaydi.
-       */
-      .where('device.is_active = true')
-      .andWhere('device.module_type = :moduleType', {
-        moduleType: rollout.moduleType,
-      });
-
-    if (rollout.targetType === RolloutTargetType.DEVICES) {
-      if (ids.length === 0) return [];
-      qb.andWhere('device.id IN (:...ids)', { ids });
-      const rows = await qb.getRawMany<{ id: string }>();
-      return rows.map((row) => row.id);
-    }
-
-    if (rollout.targetType === RolloutTargetType.ALL) {
-      const rows = await qb.getRawMany<{ id: string }>();
-      return rows.map((row) => row.id);
-    }
-
-    qb.innerJoin('boilers', 'boiler', 'boiler.id = device.boiler_id');
-
-    if (rollout.targetType === RolloutTargetType.DISTRICTS) {
-      if (ids.length === 0) return [];
-      qb.andWhere('boiler.district_id IN (:...ids)', { ids });
-    } else if (rollout.targetType === RolloutTargetType.OBJECT_TYPES) {
-      if (ids.length === 0) return [];
-      qb.leftJoin(
-        'organizations',
-        'organization',
-        'organization.id = boiler.organization_id',
-      ).andWhere('organization.object_type_id IN (:...ids)', { ids });
-    }
-
+      .select('device.id', 'id');
+    if (!applyRolloutTarget(qb, rollout)) return [];
     const rows = await qb.getRawMany<{ id: string }>();
     return rows.map((row) => row.id);
   }
@@ -699,48 +631,42 @@ export class OtaService {
    * bunga ISHONMAYDI.
    */
   private downloadUrl(version: string): string {
-    const base = this.config.get<string>('publicBaseUrl') ?? '';
+    const base = (this.config.get<string>('publicBaseUrl') ?? '').replace(
+      /\/+$/,
+      '',
+    );
     return `${base}/ota/index.php?a=download&v=${encodeURIComponent(version)}`;
   }
 
   /**
-   * MANZIL QURILMA TALABIGA MOS KELADIMI.
+   * QURILMA QABUL QILADIGAN HAVOLAMI (§5.1).
    *
-   * ⚠️ Bu `net.cpp:6` dagi `isOwnServerUrl()` ning AYNI mantig'i:
-   *   return url.startsWith(OWN_PREFIX) && url.indexOf('@') < 0;
-   * Server tomonda ham tekshirilishi sababi — xatoni DALADA emas,
-   * kabinetda ko'rish.
+   * ⚠️⚠️ Proshivka havolani QAT'IY tekshiradi: `https://<o'z serveri>/`
+   * bilan boshlanishi va ichida `@` bo'lmasligi shart (aks holda
+   * `https://server@boshqa-host/` kabi havola tokenni begona hostga
+   * yuborardi). Mos kelmasa qurilma yangilanishni rad etadi va sababi faqat
+   * uning jurnalida qoladi — shuning uchun server bunday havolani
+   * UMUMAN taklif qilmaydi.
    *
-   * ⚠️⚠️ `@` HAR QANDAY MUHITDA taqiqlanadi va bu xavfsizlik
-   * tekshiruvi, nafaqat moslik: `https://host@evil.com/…` ko'rinishdagi
-   * manzil brauzerda va ayrim HTTP kutubxonalarda `evil.com` ga
-   * ketadi. Qurilma tokeni bilan birga shunday manzil berilsa, token
-   * BEGONA serverga yuborilardi.
-   *
-   * ⚠️⚠️ `http://` ga FAQAT `development` da ruxsat. Haqiqiy qurilma
-   * uni baribir rad etadi (`net.cpp` dagi `OWN_PREFIX` — `https://`),
-   * lekin ishlab chiqish muhitida TLS sertifikati bo'lmaydi va bu
-   * tekshiruv OTA yo'lini butunlay sinab ko'rish imkonini bermasdi:
-   * `check` har doim `{"update":false}` qaytarardi va integratsiya
-   * faqat ishlab chiqarishda, dala sharoitida tekshirilardi.
-   * Ishlab chiqarishda (`production`) qoida QAT'IY qolaveradi.
+   * ⚠️ `http://` faqat ishlab chiqish muhitida (`NODE_ENV != production`).
    */
   private isDeviceAcceptableUrl(url: string): boolean {
-    // ⚠️ `@` — hamma muhitda rad etiladi (yuqoridagi izohga qara).
-    if (url.includes('@')) return false;
+    const base = (this.config.get<string>('publicBaseUrl') ?? '').replace(
+      /\/+$/,
+      '',
+    );
+    if (!base || url.includes('@')) return false;
+    if (!url.startsWith(`${base}/`)) return false;
     if (url.startsWith('https://')) return true;
 
     const env = this.config.get<string>('env') ?? 'development';
     if (env !== 'production' && url.startsWith('http://')) {
       this.logger.warn(
-        `PUBLIC_BASE_URL hali «http://» (${url.split('/ota/')[0]}). ` +
-          'Ishlab chiqish muhitida ruxsat berildi, lekin HAQIQIY QURILMA ' +
-          'bunday manzilni RAD ETADI — ishga tushirishdan oldin ' +
-          'https:// va Let‘s Encrypt sertifikati shart.',
+        `PUBLIC_BASE_URL hali «http://» (${base}). Ishlab chiqish muhitida ` +
+          'ruxsat berildi, lekin HAQIQIY QURILMA bunday manzilni RAD ETADI.',
       );
       return true;
     }
-
     return false;
   }
 

@@ -12,8 +12,8 @@ import {
  * tasniflashni «soddalashtirsa» va kirish qiymati chiqish o'rniga
  * tushib qolsa, butun viloyat holati ~20 °C pastga siljib, yolg'on
  * «ishlamayotgan» ogohlantirishlari boshlanardi. Shu xato aynan
- * mavjud Xonobod panelida bor (`worker.js:218`) — pastdagi
- * «XONOBOD XATOSI» testi uni takrorlanmasligini kafolatlaydi.
+ * eski panelda bor (`worker.js:218`) — pastdagi
+ * «ESKI PANEL XATOSI» testi uni takrorlanmasligini kafolatlaydi.
  */
 describe('classifyProbeReading', () => {
   describe('juftlik (ikkala datchik ishlayapti)', () => {
@@ -28,7 +28,7 @@ describe('classifyProbeReading', () => {
       });
     });
 
-    it('XONOBOD XATOSI: kirish haroratini chiqish o‘rniga QO‘YMAYDI', () => {
+    it('ESKI PANEL XATOSI: kirish haroratini chiqish o‘rniga QO‘YMAYDI', () => {
       // Obratka 30 °C, podacha 70 °C — real qish holati.
       const result = classifyProbeReading({ inlet: 30, outlet: 70 });
 

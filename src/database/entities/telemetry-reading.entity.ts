@@ -78,7 +78,7 @@ export class TelemetryReading extends BaseEntity {
    * barcha mavjud so'rov va indeks shu ustunga tayangan.
    *
    * ⚠️⚠️ BU YERGA KIRISH (obratka) HARORATINI YOZISH — eng xavfli
-   * xato. Xonobod panelida aynan shunday (`worker.js:218`) va u
+   * xato. Eski panelda aynan shunday (`worker.js:218`) va u
    * holatni ~20 °C pastga siljitadi. Chiqish datchigi nosoz bo'lsa,
    * qiymat `null` QOLADI — taxmin qilinmaydi.
    */
@@ -139,8 +139,10 @@ export class TelemetryReading extends BaseEntity {
     type: 'enum',
     enum: ProbeKind,
     default: ProbeKind.UNKNOWN,
+    // ⚠️ Xona moduli qatorida `null`: unda quvur datchigi yo'q.
+    nullable: true,
   })
-  probe!: ProbeKind;
+  probe!: ProbeKind | null;
 
   /**
    * QURILMA AYTGAN O'LCHOV VAQTI (oflayn navbatdan kelgan o'lchovlar).
@@ -192,4 +194,32 @@ export class TelemetryReading extends BaseEntity {
    */
   @Column({ type: 'jsonb', name: 'raw_payload', nullable: true })
   rawPayload!: Record<string, unknown> | null;
+
+  /**
+   * XONA (HAVO) HARORATI, °C — xona moduli o'lchovi.
+   *
+   * ⚠️ Xona moduli qatorida `boiler_id` HAR DOIM `null`: kotyol grafiklari
+   * `boiler_id` bo'yicha o'qiladi va havo harorati suv harorati chizig'iga
+   * aralashib ketmasligi kerak. Bu qatorlar faqat qurilma grafigi uchun
+   * (`device_id` bo'yicha).
+   */
+  @Column({
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    name: 'room_temperature',
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  roomTemperature!: number | null;
+
+  /** Havo namligi, % (0…100). Hozircha ixtiyoriy — proshivka keyin yuboradi. */
+  @Column({
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  humidity!: number | null;
 }

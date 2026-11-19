@@ -12,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
-  ModuleType,
+  DeviceType,
   OtaEventStatus,
   RolloutStatus,
   RolloutTargetType,
@@ -20,15 +20,20 @@ import {
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { Device } from '../../database/entities/device.entity';
 import {
-  FW_MARKERS,
-  FW_VERSION_MARKER,
   FirmwareBlock,
   FirmwareRelease,
   FirmwareRollout,
   OTA_PARTITION_MAX_BYTES,
   OtaEvent,
 } from '../../database/entities/firmware.entities';
+import {
+  inspectFirmwareMarkers,
+  readFirmwareMarkers,
+  resolveFirmwareIdentity,
+  type FirmwareInspection,
+} from '../../helpers/firmware-marker.helper';
 import type { CreateRolloutDto } from './dto/firmware.dto';
+import { applyRolloutTarget } from './rollout-target';
 
 /**
  * ESP32 OBRAZINING BIRINCHI BAYTI.
@@ -45,16 +50,18 @@ const ESP32_IMAGE_MAGIC = 0xe9;
 const VERSION_PATTERN = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 
 /** Xabarlarda modul turining nomi. */
-const MODULE_LABEL: Record<ModuleType, string> = {
-  [ModuleType.BOILER]: 'qozonxona moduli',
-  [ModuleType.ROOM]: 'xona moduli',
+const DEVICE_TYPE_LABEL: Record<DeviceType, string> = {
+  [DeviceType.KOTYOL]: 'qozonxona moduli',
+  [DeviceType.XONA]: 'xona moduli',
 };
 
 export interface ReleaseRow {
   id: string;
   version: string;
-  /** `.bin` ichidagi belgidan: `boiler` (XONOBOD_…) yoki `room` (XONA_…). */
-  moduleType: ModuleType;
+  /** `kotyol` | `xona` — `.bin` ichidagi `ANDIJON_FW_MODULE=` belgisidan yoki qo'lda. */
+  deviceType: DeviceType;
+  typeSource: 'marker' | 'manual';
+  markerPrefix: string | null;
   size: number;
   sha256: string;
   note: string | null;
@@ -98,7 +105,8 @@ export class FirmwareService {
    *   1) fayl bormi va bo'sh emasmi;
    *   2) birinchi bayt `0xE9`;
    *   3) hajmi OTA bo'limiga sig'adimi;
-   *   4) ichida `XONOBOD_FW_VERSION=x.y.z;` belgisi bormi;
+   *   4) ichida `ANDIJON_FW_VERSION=x.y.z;` (eski fayllarda boshqa prefiks)
+   *      va `ANDIJON_FW_MODULE=kotyol|xona;` belgilari (`firmware-marker.helper`);
    *   5) belgidagi versiya kiritilgani bilan mos keladimi;
    *   6) SHA-256 hisoblanadi;
    *   7) bazada takror yo'qmi.
@@ -114,7 +122,7 @@ export class FirmwareService {
     declaredVersion: string | undefined,
     note: string | undefined,
     user: AuthUser,
-    declaredType?: ModuleType,
+    declaredType?: DeviceType,
   ): Promise<ReleaseRow> {
     if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
       throw new BadRequestException('Proshivka fayli yuborilmagan');
@@ -137,58 +145,20 @@ export class FirmwareService {
       );
     }
 
-    // ─── 4–5. Ichidagi versiya belgisi va MODUL TURI ───
-    const marks = this.readVersionMarkers(buffer);
-    if (marks.length === 0) {
+    // ─── 4–5. Versiya belgisi (ANDIJON ustun) va MODUL TURI ───
+    let identity: ReturnType<typeof resolveFirmwareIdentity>;
+    try {
+      identity = resolveFirmwareIdentity(
+        readFirmwareMarkers(buffer),
+        declaredType ?? null,
+        declaredVersion?.trim() || null,
+      );
+    } catch (error) {
       throw new BadRequestException(
-        `Fayl ichida «${FW_VERSION_MARKER}x.y.z;» (qozonxona moduli) yoki ` +
-          '«XONA_FW_VERSION=x.y.z;» (xona moduli) belgisi topilmadi — ' +
-          'bu proshivka OTA uchun yig‘ilmagan',
+        error instanceof Error ? error.message : String(error),
       );
     }
-    /*
-     * ⚠️⚠️ IKKI BELGI BIRGA — RAD. Fayl qaysi modul uchun ekani noaniq;
-     * «birinchisini olish» qozonxona proshivkasini xona moduliga (yoki
-     * aksincha) yo'llab yuborishi mumkin edi.
-     */
-    if (marks.length > 1) {
-      throw new BadRequestException(
-        'Fayl ichida ikki xil modul belgisi bor — qaysi modul uchun ekani ' +
-          'noaniq. Proshivkada faqat bitta belgi qoldirilishi kerak',
-      );
-    }
-    const { version: markerVersion, moduleType } = marks[0];
-
-    /*
-     * ⚠️⚠️ TANLANGAN TUR FAYLGA ISHONMAYDI, FAYL TANLOVGA ISHONMAYDI — ikkalasi
-     * MOS bo'lishi shart. Faqat tanlovga tayanilsa, adashgan bosish qozonxona
-     * proshivkasini xona moduliga yo'llardi; bu yerda esa u yuklashdayoq
-     * to'xtaydi va sababi aytiladi.
-     */
-    if (declaredType && declaredType !== moduleType) {
-      throw new BadRequestException(
-        `Modul turi mos emas: fayl ichidagi belgi — ${MODULE_LABEL[moduleType]} ` +
-          `(${moduleType === ModuleType.ROOM ? 'XONA_FW_VERSION' : FW_VERSION_MARKER.slice(0, -1)}), ` +
-          `tanlangani — ${MODULE_LABEL[declaredType]}`,
-      );
-    }
-
-    /*
-     * ⚠️⚠️ QO'LDA KIRITILGAN VERSIYAGA ISHONILMAYDI. §9.2 aynan shuni
-     * talab qiladi: «qo'lda kiritilgan versiya bilan mos kelmasa, rad
-     * et». Busiz administrator eski faylni yangi raqam bilan yuklab,
-     * «hammasi 2.0.2 da» deb hisobot berardi — qurilmalarda esa
-     * 2.0.1 ishlab turardi va xato topilmasdi.
-     */
-    const declared = declaredVersion?.trim();
-    if (declared && declared !== markerVersion) {
-      throw new BadRequestException(
-        `Versiya mos emas: fayl ichida «${markerVersion}», ` +
-          `kiritilgani «${declared}»`,
-      );
-    }
-
-    const version = markerVersion;
+    const { version, deviceType } = identity;
     if (!VERSION_PATTERN.test(version)) {
       throw new BadRequestException(
         `Versiya formati noto‘g‘ri: «${version}» (kutilgan: x.y.z)`,
@@ -200,13 +170,13 @@ export class FirmwareService {
 
     // ─── 7. Takror ───
     const clash = await this.releases.findOne({
-      where: [{ version, moduleType }, { sha256 }],
-      select: { id: true, version: true, sha256: true, moduleType: true },
+      where: [{ version, deviceType }, { sha256 }],
+      select: { id: true, version: true, sha256: true, deviceType: true },
     });
     if (clash) {
       throw new ConflictException(
-        clash.version === version && clash.moduleType === moduleType
-          ? `«${version}» versiyasi (${MODULE_LABEL[moduleType]}) allaqachon yuklangan`
+        clash.version === version && clash.deviceType === deviceType
+          ? `«${version}» versiyasi (${DEVICE_TYPE_LABEL[deviceType]}) allaqachon yuklangan`
           : `Aynan shu fayl «${clash.version}» versiyasi sifatida yuklangan`,
       );
     }
@@ -222,10 +192,8 @@ export class FirmwareService {
      * xona 2.0.0 va qozonxona 2.0.0 birga bo'lishi mumkin. Qozonxona
      * nomi O'ZGARMAYDI — mavjud fayllar shu nom bilan yozilgan.
      */
-    const fileName =
-      moduleType === ModuleType.ROOM
-        ? `firmware-room-${version}.bin`
-        : `firmware-${version}.bin`;
+    // ⚠️ Turi fayl nomida ham: ikki tur bir xil versiya raqamini olishi mumkin.
+    const fileName = `firmware-${deviceType}-${version}.bin`;
     const fullPath = resolve(dir, fileName);
 
     /*
@@ -252,7 +220,9 @@ export class FirmwareService {
       const saved = await this.releases.save(
         this.releases.create({
           version,
-          moduleType,
+          deviceType,
+          typeSource: identity.typeSource,
+          markerPrefix: identity.prefix,
           // ⚠️ Faqat FAYL NOMI saqlanadi, to'liq yo'l EMAS: papka
           //    `.env` bilan ko'chishi mumkin va to'liq yo'l bazada
           //    qotib qolsa, ko'chgandan keyin hamma reliz «yo'q»
@@ -266,7 +236,7 @@ export class FirmwareService {
       );
 
       this.logger.log(
-        `Proshivka yuklandi: ${version} [${moduleType}] (${buffer.length} bayt, ` +
+        `Proshivka yuklandi: ${version} [${deviceType}, ${identity.typeSource}] (${buffer.length} bayt, ` +
           `sha256 ${sha256.slice(0, 12)}…)`,
       );
       return this.toRow(saved, null);
@@ -279,6 +249,43 @@ export class FirmwareService {
       await unlink(fullPath).catch(() => undefined);
       throw error;
     }
+  }
+
+  /**
+   * YUKLASHDAN OLDIN KO'RISH — panel tur tanlovini to'ldirishi uchun.
+   *
+   * ⚠️ Faylni SAQLAMAYDI va bazaga yozmaydi: faqat `upload` bilan AYNI
+   * tekshiruvlarni (0xE9, hajm, belgilar) bajarib, natijani qaytaradi.
+   */
+  inspect(
+    file: { buffer: Buffer; size: number; originalname: string } | undefined,
+  ): FirmwareInspection & {
+    size: number;
+    sha256: string;
+    isEsp32Image: boolean;
+    fitsPartition: boolean;
+    maxSize: number;
+  } {
+    if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
+      throw new BadRequestException('Proshivka fayli yuborilmagan');
+    }
+    const buffer = file.buffer;
+    const inspected = inspectFirmwareMarkers(readFirmwareMarkers(buffer));
+    const isEsp32Image = buffer[0] === ESP32_IMAGE_MAGIC;
+    const fitsPartition = buffer.length <= OTA_PARTITION_MAX_BYTES;
+    return {
+      ...inspected,
+      error: !isEsp32Image
+        ? 'Bu ESP32 proshivkasi emas: fayl 0xE9 bayti bilan boshlanishi kerak'
+        : !fitsPartition
+          ? `Fayl juda katta: ${buffer.length} bayt (chegara ${OTA_PARTITION_MAX_BYTES})`
+          : inspected.error,
+      size: buffer.length,
+      sha256: createHash('sha256').update(buffer).digest('hex'),
+      isEsp32Image,
+      fitsPartition,
+      maxSize: OTA_PARTITION_MAX_BYTES,
+    };
   }
 
   async listReleases(): Promise<ReleaseRow[]> {
@@ -354,14 +361,14 @@ export class FirmwareService {
     if (dto.targetType === RolloutTargetType.DEVICES) {
       const mismatched = await this.devices.find({
         where: { id: In(ids) },
-        select: { id: true, deviceId: true, moduleType: true },
+        select: { id: true, deviceId: true, deviceType: true },
       });
       const wrong = mismatched.filter(
-        (device) => device.moduleType !== release.moduleType,
+        (device) => device.deviceType !== release.deviceType,
       );
       if (wrong.length > 0) {
         throw new BadRequestException(
-          `Bu reliz ${MODULE_LABEL[release.moduleType]} uchun, tanlanganlar ` +
+          `Bu reliz ${DEVICE_TYPE_LABEL[release.deviceType]} uchun, tanlanganlar ` +
             `orasida boshqa turdagi modul bor: ` +
             wrong
               .slice(0, 5)
@@ -376,11 +383,17 @@ export class FirmwareService {
       const saved = await this.rollouts.save(
         this.rollouts.create({
           releaseId: release.id,
-          moduleType: release.moduleType,
+          deviceType: release.deviceType,
           status: RolloutStatus.ACTIVE,
           targetType: dto.targetType,
           targetIds: ids,
-          maxDevices: dto.maxDevices ?? null,
+          /*
+           * ⚠️⚠️ SUKUT — 1 TA QURILMADA SINOV (§5.5). Keyingi bosqichlar
+           * `setRolloutLimit` bilan (10 → 50 → cheklovsiz). Chegara
+           * aytilmasa butun viloyat bir zumda yangilanib, yaroqsiz
+           * proshivka hamma platani birdan halqaga solardi.
+           */
+          maxDevices: dto.maxDevices === undefined ? 1 : dto.maxDevices,
           note: dto.note?.trim() || null,
           createdById: user.id,
         }),
@@ -390,7 +403,7 @@ export class FirmwareService {
       this.logger.log(
         `Tarqatish boshlandi: ${release.version} → ${dto.targetType} ` +
           `(${targetCount} qurilma` +
-          (dto.maxDevices ? `, sinov: ${dto.maxDevices}` : '') +
+          `, bosqich: ${dto.maxDevices === undefined ? 1 : (dto.maxDevices ?? '∞')}` +
           ')',
       );
       return { id: saved.id, targetCount };
@@ -400,7 +413,7 @@ export class FirmwareService {
       )?.driverError?.code;
       if (code === '23505') {
         throw new ConflictException(
-          `${MODULE_LABEL[release.moduleType]} uchun allaqachon faol tarqatish ` +
+          `${DEVICE_TYPE_LABEL[release.deviceType]} uchun allaqachon faol tarqatish ` +
             'bor — avval uni to‘xtatish kerak',
         );
       }
@@ -434,12 +447,12 @@ export class FirmwareService {
 
     if (status === RolloutStatus.ACTIVE) {
       const other = await this.rollouts.findOne({
-        where: { status: RolloutStatus.ACTIVE, moduleType: rollout.moduleType },
+        where: { status: RolloutStatus.ACTIVE, deviceType: rollout.deviceType },
         select: { id: true },
       });
       if (other && other.id !== id) {
         throw new ConflictException(
-          `${MODULE_LABEL[rollout.moduleType]} uchun boshqa tarqatish faol — ` +
+          `${DEVICE_TYPE_LABEL[rollout.deviceType]} uchun boshqa tarqatish faol — ` +
             'avval uni to‘xtatish kerak',
         );
       }
@@ -456,11 +469,38 @@ export class FirmwareService {
     return { status };
   }
 
+  /**
+   * BOSQICHNI KENGAYTIRISH — bir vaqtda nechta qurilma yangilanadi.
+   *
+   * ⚠️ Chegara hisobi «taklif qilingan / o'rnatilgan / tasdiqlangan»
+   * qurilmalar soni bo'yicha (`OtaService.hasFreeSlot`): 1 → 10 qilinsa,
+   * sinovdagi qurilma qayta hisoblanmaydi, yana 9 tasiga taklif ochiladi.
+   * `null` — cheklovsiz (oxirgi bosqich).
+   */
+  async setRolloutLimit(
+    id: string,
+    maxDevices: number | null,
+  ): Promise<{ maxDevices: number | null }> {
+    const rollout = await this.rollouts.findOne({ where: { id } });
+    if (!rollout) throw new NotFoundException('Tarqatish topilmadi');
+    if (
+      rollout.status === RolloutStatus.DONE ||
+      rollout.status === RolloutStatus.CANCELLED
+    ) {
+      throw new ConflictException(
+        'Tugagan yoki bekor qilingan tarqatishni o‘zgartirib bo‘lmaydi',
+      );
+    }
+    await this.rollouts.update(id, { maxDevices });
+    this.logger.log(`Tarqatish ${id}: bosqich → ${maxDevices ?? 'cheklovsiz'}`);
+    return { maxDevices };
+  }
+
   async listRollouts(): Promise<
     Array<{
       id: string;
       version: string;
-      moduleType: ModuleType;
+      deviceType: DeviceType;
       status: RolloutStatus;
       targetType: RolloutTargetType;
       targetIds: string[];
@@ -478,7 +518,7 @@ export class FirmwareService {
     return rows.map((row) => ({
       id: row.id,
       version: row.release?.version ?? '—',
-      moduleType: row.moduleType,
+      deviceType: row.deviceType,
       status: row.status,
       targetType: row.targetType,
       targetIds: row.targetIds ?? [],
@@ -652,51 +692,13 @@ export class FirmwareService {
 
   // ═══════════════════════ Yordamchilar ═══════════════════════
 
-  /**
-   * `.bin` ICHIDAN VERSIYANI O'QISH.
-   *
-   * ⚠️⚠️ Belgi proshivkada QOTIRILGAN (`ota.cpp:30`):
-   *   const char FW_VERSION_MARK[] = "XONOBOD_FW_VERSION=" FW_VERSION ";";
-   * Shuning uchun u `.bin` ning ichida ODDIY MATN bo'lib yotadi va
-   * uni `latin1` sifatida qidirish mumkin.
-   *
-   * ⚠️ `latin1` ATAYLAB, `utf8` EMAS: ikkilik faylda har qanday bayt
-   * bo'lishi mumkin va `utf8` dekodlash yaroqsiz ketma-ketliklarni
-   * `U+FFFD` bilan almashtirib, belgini ikkiga bo'lib tashlashi
-   * mumkin. `latin1` esa bayt↔belgi mosligini BUZMAYDI.
-   */
-  private readVersionMarkers(
-    buffer: Buffer,
-  ): Array<{ version: string; moduleType: ModuleType }> {
-    const text = buffer.toString('latin1');
-    const found: Array<{ version: string; moduleType: ModuleType }> = [];
-
-    for (const { marker, type } of FW_MARKERS) {
-      const at = text.indexOf(marker);
-      /*
-       * ⚠️ `XONA_FW_VERSION=` — `XONOBOD_FW_VERSION=` ning QISMI EMAS
-       * (`XONOBOD_` ≠ `XONA_`), shuning uchun biri ikkinchisini soxta
-       * topmaydi va mavjud qozonxona fayllari avvalgidek o'qiladi.
-       */
-      if (at < 0) continue;
-
-      const start = at + marker.length;
-      const end = text.indexOf(';', start);
-      // ⚠️ Chegara: versiya 32 belgidan uzun bo'lishi mumkin emas —
-      //    aks holda buzilgan faylda butun fayl «versiya» bo'lib ketardi.
-      if (end < 0 || end - start > 32) continue;
-
-      const version = text.slice(start, end).trim();
-      if (version.length > 0) found.push({ version, moduleType: type });
-    }
-    return found;
-  }
-
   private toRow(row: FirmwareRelease, uploadedBy: string | null): ReleaseRow {
     return {
       id: row.id,
       version: row.version,
-      moduleType: row.moduleType,
+      deviceType: row.deviceType,
+      typeSource: row.typeSource,
+      markerPrefix: row.markerPrefix,
       size: row.size,
       sha256: row.sha256,
       note: row.note,
@@ -711,56 +713,11 @@ export class FirmwareService {
     return ids.length;
   }
 
-  /**
-   * Tarqatish maqsadiga kiradigan qurilmalar.
-   *
-   * ⚠️ `OtaService.targetDeviceIds` bilan AYNI mantiq. Ikki nusxa
-   * bo'lgani yomon, lekin bu yerda u faqat KO'RSATISH uchun
-   * (jarayon ekrani, «nechta qurilmaga tegadi»), u yerda esa
-   * QAROR uchun (tarqatish tugadimi). Bir-biridan ajralib ketmasligi
-   * uchun ikkalasi ham AYNI SQL shartlarini ishlatadi va
-   * o'zgartirilganda ikkalasi birga o'zgaradi.
-   */
   private async targetDeviceIds(rollout: FirmwareRollout): Promise<string[]> {
-    const ids = rollout.targetIds ?? [];
-
-    if (rollout.targetType === RolloutTargetType.DEVICES) {
-      if (ids.length === 0) return [];
-      const rows = await this.devices.find({
-        where: { id: In(ids), isActive: true, moduleType: rollout.moduleType },
-        select: { id: true },
-      });
-      return rows.map((row) => row.id);
-    }
-
     const qb = this.devices
       .createQueryBuilder('device')
-      .select('device.id', 'id')
-      .where('device.is_active = true')
-      // ⚠️ Faqat relizning turidagi modullar (`OtaService` bilan AYNI).
-      .andWhere('device.module_type = :moduleType', {
-        moduleType: rollout.moduleType,
-      });
-
-    if (rollout.targetType === RolloutTargetType.ALL) {
-      const rows = await qb.getRawMany<{ id: string }>();
-      return rows.map((row) => row.id);
-    }
-
-    qb.innerJoin('boilers', 'boiler', 'boiler.id = device.boiler_id');
-
-    if (rollout.targetType === RolloutTargetType.DISTRICTS) {
-      if (ids.length === 0) return [];
-      qb.andWhere('boiler.district_id IN (:...ids)', { ids });
-    } else if (rollout.targetType === RolloutTargetType.OBJECT_TYPES) {
-      if (ids.length === 0) return [];
-      qb.leftJoin(
-        'organizations',
-        'organization',
-        'organization.id = boiler.organization_id',
-      ).andWhere('organization.object_type_id IN (:...ids)', { ids });
-    }
-
+      .select('device.id', 'id');
+    if (!applyRolloutTarget(qb, rollout)) return [];
     const rows = await qb.getRawMany<{ id: string }>();
     return rows.map((row) => row.id);
   }

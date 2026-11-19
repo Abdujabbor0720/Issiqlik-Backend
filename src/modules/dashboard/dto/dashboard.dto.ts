@@ -13,6 +13,16 @@ export class DashboardQueryDto {
   @IsUUID('4', { each: true })
   @IsOptional()
   districtIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Obyekt turlari («Kataloglar → Obyekt turlari» id)',
+  })
+  @Transform(toArray)
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  objectTypeIds?: string[];
 }
 
 export class TrendQueryDto extends DashboardQueryDto {
@@ -61,8 +71,19 @@ export interface DashboardSummary {
 
 export interface DistrictRow {
   districtId: string;
+  /** Proshivka kaliti (`asaka`). */
+  districtKey: string;
   name: string;
   shortName: string;
+  /** Faol qurilmalar (amaldagi tumani shu tuman). */
+  devicesTotal: number;
+  /** Oxirgi telemetriya 5 daqiqadan yangi. */
+  devicesOnline: number;
+  devicesOffline: number;
+  /** O'lchovi bor va chiqish harorati me'yordan past kotyollar. */
+  belowNorm: number;
+  /** Ochiq ogohlantirishlar (kotyol va xona). */
+  openAlerts: number;
   total: number;
   boilerUnits: number;
   active: number;

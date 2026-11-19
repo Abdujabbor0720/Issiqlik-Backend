@@ -16,6 +16,8 @@ import { User } from '../entities/user.entity';
 
 interface DistrictFeature {
   properties: {
+    /** Proshivka kaliti (`andijon-sh`). Eski faylda bo'lmasa `code` dan. */
+    key?: string;
     code: string;
     name: string;
     shortName: string;
@@ -96,6 +98,8 @@ export class BootstrapService implements OnApplicationBootstrap {
     const rows = file.features.map((feature) =>
       this.districts.create({
         code: feature.properties.code,
+        key:
+          feature.properties.key ?? feature.properties.code.replace(/_/g, '-'),
         name: feature.properties.name,
         shortName: feature.properties.shortName,
         soato: feature.properties.soato ?? null,

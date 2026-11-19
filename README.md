@@ -1,12 +1,16 @@
-# Issiqlik — backend
+# Andijon viloyati issiqlik monitoring tizimi — backend
 
-Hududlardagi **qozonxonalarni (kotyollarni)** ESP32 modullari orqali real
-vaqtda monitoring qilish tizimi. Andijon viloyatining 16 ta tumani va
-shahri bo'yicha ishlaydi.
+Andijon viloyatining 16 ta tumani va shahridagi **qozonxonalar (kotyollar)**
+va **xona haroratini** ESP32 modullari orqali real vaqtda kuzatish tizimi.
 
-**Stek:** TypeScript · NestJS 11 · PostgreSQL · TypeORM · Socket.IO
+| | |
+|---|---|
+| Panel | https://issiqlik.yaxshihayot.uz (frontend: `../Issiqlik-Frontend`) |
+| API | https://issiqlik-api.yaxshihayot.uz |
+| Stek | TypeScript · NestJS 11 · PostgreSQL · TypeORM · Socket.IO |
+| Qurilmalar | kotyol moduli v2.1.0 (2× DS18B20), xona moduli v1.1.0; eski v2.0.0 / v1.0.0 ham ishlaydi |
 
-Frontend alohida papkada: `../Issiqlik-Frontend`
+Qurilma kontrakti, OTA va TLS talablari — **[docs/ESP32-OTA.md](docs/ESP32-OTA.md)**.
 
 ---
 
@@ -17,235 +21,231 @@ npm install
 cp .env.example .env
 
 npm run db:setup       # PostgreSQL klasteri + baza (sudo KERAK EMAS)
-npm run migration:run  # sxema
-npm run seed           # 16 tuman + demo kotyollar + 48 soatlik telemetriya
-npm run start:dev      # server
+npm run migration:run  # sxema (tumanlar kaliti, MFY va muassasalar katalogi ham)
+npm run seed           # demo: 16 tuman + kotyollar + 48 soatlik telemetriya
+npm run start:dev
 ```
 
-### Baza — loyihaning o'z klasteri
-
-⚠️ Tizim klasteri (5432/5433) ishlatilmaydi: unga ulanish `sudo` yoki
-`postgres` rolining parolini talab qiladi. Buning o'rniga `db:setup`
-joriy foydalanuvchi nomidan **alohida klaster** yaratadi:
-
-| Nima | Qiymat |
-|---|---|
-| Ma'lumot | `~/.local/share/issiqlik/pgdata` |
-| Port | `5442` |
-| Jurnal | `~/.local/share/issiqlik/server.log` |
-| Rol / baza | `issiqlik` / `issiqlik_db` |
-
-```bash
-npm run pg:start     # ko'tarish (kompyuter qayta yoqilgandan keyin)
-npm run pg:stop      # to'xtatish
-npm run pg:status    # holat
-npm run pg:psql      # bazaga kirish
-```
-
-⚠️ Klaster **avtomatik ishga tushmaydi** — kompyuter qayta yoqilgach
-`npm run pg:start` kerak. Tizim klasteriga o'tmoqchi bo'lsangiz,
-`.env` da `DB_PORT=5432` qiling va rol/bazani `sudo -u postgres psql`
-bilan qo'lda yarating.
-
-### Demo ma'lumotni tirik saqlash
-
-```bash
-npm run demo:feed              # bir marta — hamma modulga yangi o'lchov
-npm run demo:feed -- --watch   # har 60 soniyada
-```
-
-⚠️ Busiz demo «o'ladi»: holat kuzatuvchi cron 15 daqiqadan keyin hamma
-kotyolni «aloqa yo'q» ga o'tkazadi va ekranda bo'm-bo'sh manzara
-qoladi. `demo:feed` to'g'ridan-to'g'ri bazaga yozadi (API kalitlar
-faqat hash holida saqlanadi, 168 ta qurilmaning kalitini hech qayerdan
-o'qib bo'lmaydi); bitta qurilmani HAQIQIY HTTP oqimi bilan sinash uchun
-`npm run simulate` bor.
-
-Natija:
+Lokal klaster: port `5442`, ma'lumot `~/.local/share/issiqlik/pgdata`.
+Kompyuter qayta yoqilgach `npm run pg:start` kerak (`pg:stop`,
+`pg:status`, `pg:psql` ham bor).
 
 | Manzil | Nima |
 |---|---|
-| `http://localhost:3000/api/v1` | REST API |
-| `http://localhost:3000/api/v1/docs` | Swagger hujjatlari |
-| `http://localhost:3000/api/data` | **ESP32 endpoint** |
-| `ws://localhost:3000/realtime` | Jonli yangilanish (Socket.IO) |
+| `/api/v1` | REST API (`/api/v1/docs` — Swagger, faqat ishlab chiqishda) |
+| `POST /index.php/api/integrations/telemetry` | qurilma telemetriyasi (prefikssiz nusxa ham bor) |
+| `GET/POST /ota/index.php` | OTA: `a=check`, `a=download`, `a=report` |
+| `POST /api/data` | eng eski `modul1` proshivkasi |
+| `ws://…/realtime` | jonli yangilanish (Socket.IO) |
 
-**Birinchi kirish:** `.env` dagi `ADMIN_LOGIN` va `ADMIN_PASSWORD`.
-Ular berilmasa, hisob umuman yaratilmaydi (`bootstrap.service.ts`).
-
-> ⚠️ Haqiqiy parolni bu faylga yozmang: README ommaviy
-> repozitoriyada turadi va u yerdagi parol bilan tizimga kirish
-> mumkin bo'lardi.
-
-**Demo operator** (faqat `npm run seed` bilan, demo bazada):
-`operator.jalaquduq` / `operator2026`
+**Birinchi kirish:** `.env` dagi `ADMIN_LOGIN` / `ADMIN_PASSWORD` (faqat
+bazada `super_admin` yo'q bo'lsa o'qiladi). Haqiqiy parolni bu faylga
+yozmang. Demo tuman mas'uli (faqat `npm run seed` bilan):
+`operator.demo` / `operator2026` — Asaka tumani.
 
 ---
 
-## 2. Kotyol holati — asosiy qoida
+## 2. Viloyat tuzilmasi
 
-Chiqish harorati (ESP32 yuboradigan **yagona** o'lchov) chegaralar bilan
-solishtiriladi:
-
-| Harorat | Holat | Izoh |
-|---|---|---|
-| `≥ 50 °C` | **Faol ishlayotgan** | me'yorda |
-| `40 – 50 °C` | **O'rta ishlayotgan** | quvvat yetmayapti |
-| `20 – 40 °C` | **Ishlamayotgan** | isitmayapti |
-| `< 20 °C` yoki signal yo'q | **Aloqa yo'q** | sovuq yoki uzilgan |
-
-- Chegaralar **Sozlamalar** sahifasidan o'zgartiriladi (`system_settings`),
-  `.env` dagi qiymatlar faqat boshlang'ich.
-- Formula **bitta joyda**: `src/helpers/boiler-status.helper.ts`
-  (`resolveBoilerStatus`). Uni telemetriya servisi, holat kuzatuvchi cron
-  va seed — uchalasi ham chaqiradi.
-- O'tgan o'lchovlarga holat **muhrlangan**: chegara o'zgarsa, eski
-  hisobot qayta yozilmaydi.
-
----
-
-## 3. ESP32 bilan ulanish
-
-Proshivkadagi manzil va kalit o'zgarmaydi:
-
-```cpp
-const char* DEVICE_ID = "modul1";
-const char* API_URL   = "http://<server>:3000/api/data";
-const char* API_KEY   = "91abcc3d6732ab04d017d3a30ded31b1";
+```
+Viloyat ── Tuman (districts.key) ── MFY (mahallas)
+                 └── Muassasa (organizations: district_key, object_type, mahalla_id?)
+                          └── Kotyol (boilers) ── Qurilmalar (devices: kotyol | xona)
 ```
 
-So'rov:
+* **Tuman kaliti** (`districts.key`: `andijon-sh`, `xonobod-sh`, `boz`,
+  `asaka`, …) — proshivkada qotirilgan, qurilma telemetriyada aynan shuni
+  yuboradi. Ichki UUID `id` va eski `code` o'zgarmagan: ularga ko'p jadval
+  ishora qiladi.
+* **Muassasalar katalogi tuman bo'yicha**: «12-maktab» har tumanda bor,
+  nom yagonaligi tuman ichida. Avvalgi umumiy ro'yxatdagi yozuvlar
+  o'chirilmagan — migratsiya har birini o'zini ishlatgan kotyollar
+  tumaniga biriktirgan (bir nechta tumanda ishlatilgani har tuman uchun
+  alohida yozuvga ajratilgan).
+* **Obyekt turlari**: `school`, `kindergarten`, `college`, `clinic`,
+  `hospital`, `admin`, `residential`, `other`.
+
+### Yangi tuman qo'shish
+
+Faqat ma'muriy o'zgarishda. Kalit **proshivka menyusidagi kalit bilan
+aynan bir xil** bo'lishi va keyin o'zgarmasligi shart:
 
 ```http
-POST /api/data
-Content-Type: application/json
-x-api-key: 91abcc3d6732ab04d017d3a30ded31b1
-
-{ "deviceId": "modul1", "temperature": 54.5 }
+POST /api/v1/geo/districts            (ruxsat: settings.update — bosh administrator)
+{ "key": "yangi-tuman", "name": "Yangi tumani", "kind": "district",
+  "centerLat": 40.78, "centerLng": 72.34 }
 ```
 
-Javob: `{"ok":true,"nextIntervalSec":30,"status":"active","boilerAssigned":true}`
+Chegara (xarita ko'pburchagi) keyin `src/database/seeds/data/andijon-districts.geojson`
+ga qo'shiladi. Proshivka menyusiga yangi kalit qo'shilmaguncha qurilma
+uni yubora olmaydi — panelda qo'lda tanlanadi.
 
-**Moslashuvchanlik** (proshivkani qayta yozish shart emas):
+### Yangi obyekt (muassasa), obyekt turi va MFY qo'shish
 
-- Maydon nomlari: `deviceId` / `device_id` / `id`,
-  `temperature` / `temp` / `t` / `value`
-- Kalit: `x-api-key`, `api-key`, `x-device-key`, `Authorization: Bearer`,
-  body'dagi `apiKey`, yoki query'dagi `?key=`
-- **Ortiqcha maydonlar rad etilmaydi** (`rssi`, `uptime`, `heap`) —
-  ular `raw_payload` ga saqlanadi.
+Panel → **Kataloglar**:
 
-### Qurilmasiz test qilish
+* **Muassasalar** — nom, tuman, obyekt turi, ixtiyoriy MFY
+  (`POST /api/v1/catalogs/organizations`
+  `{ name, districtKey, objectTypeId, mahallaId? }`). MFY muassasa
+  tumanidan bo'lishi shart.
+* **Obyekt turlari** — kalit (`sport_school`) va nom. Kalit keyin
+  o'zgarmaydi; qurilma `object_type` da shu kalitni yuboradi.
+* **MFYlar** — qo'lda (`POST /api/v1/catalogs/mahallas { name, districtKey }`)
+  yoki fayldan:
 
 ```bash
-npm run simulate -- --device modul1 --key 91abcc3d6732ab04d017d3a30ded31b1 --loop 10
+npm run import:mfy -- --file andijon-tumanlar-mfylar.json          # sinov — hech narsa yozilmaydi
+npm run import:mfy -- --file andijon-tumanlar-mfylar.json --apply  # yozish
 ```
+
+Fayl shakli `[{ "tuman": "Asaka tumani", "mfylar": ["…", "…"] }]`. Tuman
+nomi kalitga moslanadi («Andijon shahri» → `andijon-sh`, «Bo'ston tumani»
+yoki «Bo'z tumani» → `boz`); tanilmagan nomlar hisobotda chiqadi. Import
+idempotent: qayta ishga tushirilsa takror yozmaydi.
+
+Qurilma ro'yxatga olinganda yoki joylashuv taklifi tasdiqlanganda plata
+yuborgan muassasa nomi katalogdan topiladi, yo'q bo'lsa katalogga
+qo'shiladi.
 
 ---
 
-## 4. Arxitektura
+## 3. Rollar: viloyat admini va tuman mas'uli
 
-```
-src/
-├── config/          # sozlama, validatsiya (Joi), DataSource, pg turlari
-├── common/          # guard, interceptor, filter, DTO, ruxsatlar
-├── helpers/         # holat formulasi, sana, tuman chegarasi
-├── database/
-│   ├── entities/    # 13 ta entity + ENTITIES ro'yxati
-│   ├── migrations/  # qo'lda yozilgan xom SQL
-│   ├── seeds/       # demo ma'lumot + andijon-districts.geojson
-│   └── bootstrap/   # bo'sh bazada hudud va superadmin
-└── modules/
-    ├── auth        users       geo        catalogs
-    ├── boilers     devices     telemetry  alerts
-    ├── dashboard   settings    audit      realtime
-    ├── jobs        health
-```
-
-### Muhim qarorlar
-
-| Qaror | Sabab |
+| Rol | Ko'radi |
 |---|---|
-| Joriy holat **kotyol qatorida** saqlanadi | Xarita 2000 kotyolni bitta so'rovda o'qiydi; har biri uchun oxirgi o'lchovni qidirish sekundlarga cho'zilardi |
-| Holat kuzatuvchi cron (har daqiqa) | Busiz uzilgan qurilma **abadiy «faol»** bo'lib turardi — holatni yangilaydigan hech narsa yo'q |
-| `boiler_id` telemetriyada **takrorlangan** | Grafik so'rovi qurilma jadvaliga JOIN qilmasligi va qurilma ko'chirilganda tarix **eski kotyolda** qolishi uchun |
-| Ogohlantirish — **bitta ochiq qator** | Har o'lchovda yangi qator yozilsa, bitta sovuq kotyol kuniga 2880 ta xabar yaratardi |
-| WebSocket faqat **holat o'zgarganda** | Har signalda yuborilsa, sekundiga 66 ta xabar — brauzer qotib qolardi |
-| API kalit — **SHA-256 hash** | Tekshiruv har signalda bo'ladi; bcrypt ataylab sekin va serverni yiqitardi. Kalit 32 bayt tasodif, lug'at hujumi ma'nosiz |
-| `/api/data` global prefiksdan **tashqarida** | Proshivkada manzil qotirilgan; prefiks qo'shilsa hamma qurilmani qayta proshivka qilish kerak bo'lardi |
+| `super_admin`, `admin` (viloyat admini) | hammasini |
+| `operator` (**tuman mas'uli**) | faqat o'z tumani: kotyollar, qurilmalar, «Yangi qurilmalar», grafiklar, dashboard, muassasa/MFY katalogi, eksport |
+| `viewer` | hammasini, faqat o'qish |
 
-### Ruxsatlar va tuman mas'ullari
+Chegara **API darajasida**, `where` shartida — UI'da yashirish emas.
+Begona tuman qurilmasi so'ralsa `404` qaytadi (mavjudligi ham oshkor
+qilinmaydi). Buni `npm run test:e2e` tekshiradi.
 
-To'rtta rol — `super_admin`, `admin`, **`operator` (tuman mas'uli)**,
-`viewer`. Ruxsatlar mayda bo'laklarga bo'lingan
-(`src/common/constants/permissions.ts`): «ko'rish» huquqi «o'chirish»
-huquqini olib kelmaydi.
+### Tuman mas'ulini tayinlash
 
-**Tuman mas'uli** — har bir tuman uchun alohida hisob. U o'z tumanining
-kotyollari, modullari, ogohlantirishlari, grafiklari va Excel
-eksportini ko'radi; boshqa tumanlar uning uchun **umuman mavjud emas**.
+Panel → **Tuman mas'ullari** → tumanni tanlash → login, parol, F.I.Sh.
+Yoki API:
 
-Tuman chegarasi guard emas, **so'rovning `where` shartida**
-(`src/helpers/scope.helper.ts`): mas'ul ro'yxatni ocha oladi, lekin
-ro'yxatning o'zi torayadi. Guard «ha/yo'q» deydi — bu yerda esa
-ro'yxatning O'ZI qisqarishi kerak.
+```http
+POST /api/v1/users
+{ "login": "masul.asaka", "password": "…", "fullName": "…",
+  "role": "operator", "districtId": "<tuman id — GET /api/v1/geo/districts>" }
+```
 
-| Endpoint | Nima |
-|---|---|
-| `GET /users/district-responsibles` | 16 tuman + har biriga biriktirilgan mas'ul(lar) |
-| `POST /users` | mas'ul yaratish (`role: operator` + `districtId`) |
-| `PATCH /users/:id` | tahrirlash, faolsizlantirish |
-| `POST /users/:id/reset-password` | parolni almashtirish (sessiyalar yopiladi) |
-| `DELETE /users/:id` | o'chirish (faqat `super_admin`) |
-
-⚠️ **Huquq oshirish himoyasi** (`assertCanAssignRole`, `assertCanManage`):
-foydalanuvchi **o'zidan yuqori yoki teng** darajadagi rolni bera olmaydi
-va bunday hisobni tahrirlay, parolini almashtira yoki o'chira olmaydi.
-Busiz `users.create` huquqi bor administrator o'ziga yangi `super_admin`
-yaratib, butun tizimni egallab olardi. Daraja `ROLE_LEVEL`
-(`common/constants/enums.ts`) da, rollar bilan BITTA faylda — yangi rol
-qo'shgan dasturchi uni unutib, u jimgina «eng past daraja» bo'lib
-qolmasligi uchun.
-
-⚠️ Bitta tumanda **bir nechta mas'ul** bo'lishi mumkin va bu ataylab:
-qat'iy «bitta tumanga bitta mas'ul» qoidasi qo'yilsa, mas'ul almashganda
-eskisini AVVAL o'chirish kerak bo'lardi — ya'ni uning audit jurnalidagi
-shaxsi yo'qolardi. Endi eskisi faolsizlantiriladi, yangisi qo'shiladi va
-tarix butun qoladi.
+Bir tumanda bir nechta mas'ul bo'lishi mumkin. Almashganda eskisi
+o'chirilmaydi, faolsizlantiriladi: audit jurnalidagi shaxsi saqlanadi.
+Foydalanuvchi o'zidan yuqori yoki teng rol bera olmaydi.
 
 ---
 
-## 5. Buyruqlar
+## 4. Yangi qurilmani ro'yxatga olish
+
+1. Montajchi platani o'rnatadi va telefondan sozlash sahifasida Wi-Fi,
+   tuman, obyekt turi va muassasa nomini tanlaydi.
+2. Qurilma serverga uriladi va **403** oladi. U panelda **ESP32 modullari
+   → «Yangi qurilmalar»** ro'yxatiga tushadi: `device_id`, tur (kotyol /
+   xona), plata aytgan tuman / obyekt turi / muassasa, IP, oxirgi vaqt.
+3. **«Ro'yxatga olish»** — bitta bosish
+   (`POST /api/v1/devices/pending/:id/register`). Qurilma yuborgan token
+   qabul qilinadi (plata o'zgarishsiz ishlay boshlaydi), joylashuv plata
+   aytganidan olinadi; xohlasangiz boshqa tuman / muassasa / kotyol yoki
+   kalitni qo'lda tanlaysiz.
+4. Kotyol moduli kotyolga, xona moduli binoning kotyoliga biriktiriladi
+   (bitta kotyolga bitta kotyol moduli, xona modullari — istalgancha).
+
+**Avtomatik ro'yxatga olish yo'q** — ro'yxatda yo'q `device_id` har doim
+403 oladi. Bir xil `device_id` bilan turli tokenlar kelsa, bir bosishda
+ro'yxatga olinmaydi (kalit qo'lda kiritiladi).
+
+**Joylashuv taklifi.** Plata yuborgan tuman / obyekt turi / muassasa
+panelni hech qachon o'zgartirmaydi: panelda bo'sh maydon bo'lsa — taklif
+(«Qurilmalar» sahifasida «Tasdiqlash», `POST /api/v1/devices/:id/location/confirm`),
+to'la bo'lsa — e'tiborsiz, jurnalga ogohlantirish.
+
+**Qurilmalar sahifasi**: `device_id`, turi, tuman / obyekt turi /
+muassasa, proshivka versiyasi, oxirgi telemetriya (5 daqiqadan eski —
+«oflayn»), oxirgi OTA holati, token turi. Filtrlar: tuman, tur, holat,
+versiya (`GET /api/v1/devices?districtId&deviceType&status=online|offline&version`).
+Grafik: `GET /api/v1/telemetry/devices/:id/series` — kotyolda kirish/chiqish,
+xonada xona harorati (va namlik).
+
+---
+
+## 5. Proshivka: yuklash va tur bo'yicha tarqatish
+
+### Yuklash
+
+Panel → **Proshivka (OTA)** → «Yuklash» → `.bin`. Server tekshiradi:
+
+* birinchi bayt `0xE9`, hajm ≤ 1 966 080 bayt;
+* versiya `ANDIJON_FW_VERSION=x.y.z;` belgisidan (umumiy ifoda
+  `([A-Z]+)_FW_VERSION=…;`, `ANDIJON` ustun — eski prefiksli belgi ham o'qiladi);
+* tur `ANDIJON_FW_MODULE=kotyol;` / `xona;` belgisidan. Belgisiz eski
+  faylda turni yuklovchi tanlaydi (taklif: 2.x → kotyol, 1.x → xona);
+* SHA-256 serverda hisoblanadi; (tur, versiya) juftligi ikki marta
+  yuklanmaydi.
+
+`.bin` fayllar `FIRMWARE_DIR` da (web root va deploy papkasidan tashqarida
+— ichida umumiy token bo'lishi mumkin).
+
+### Tarqatish
+
+«Tarqatish» → **modul turi relizdan olinadi va majburiy filtr** → maqsad:
+butun viloyat, tanlangan tumanlar, obyekt turi yoki tanlangan qurilmalar.
+
+* Sukut — **1 ta qurilmada sinov**. Sinov `ok` bilan tasdiqlangach
+  «Keyingi bosqich»: 10 → 50 → hammasi.
+* «To'xtatish» — yangi taklif berilmaydi, keyin davom ettiriladi.
+* Qurilma `rolled_back` yoki ketma-ket 3 marta `failed` yuborsa, o'sha
+  versiya unga boshqa taklif qilinmaydi; panelda «Qayta urinish» blokni
+  olib tashlaydi.
+* Kotyol `.bin` hech qachon xona platasiga taklif qilinmaydi (va aksincha):
+  qurilmaning turi `type=` / `X-Device-Type` dan, aytilmasa bazadan olinadi.
+
+---
+
+## 6. Kotyol holati — asosiy qoida
+
+Chiqish harorati chegaralar bilan solishtiriladi (chegaralar —
+**Sozlamalar** sahifasida, `.env` dagisi faqat boshlang'ich):
+
+| Harorat | Holat |
+|---|---|
+| `≥ 50 °C` | faol ishlayotgan |
+| `40 – 50 °C` | o'rta ishlayotgan |
+| `20 – 40 °C` | ishlamayotgan |
+| `< 20 °C` yoki signal yo'q | aloqa yo'q |
+
+Formula bitta joyda: `src/helpers/boiler-status.helper.ts`. O'tgan
+o'lchovlarga holat muhrlangan.
+
+**Dashboard**: viloyat bo'yicha umumiy ko'rinish, tuman va obyekt turi
+filtri (`districtIds`, `objectTypeIds`), tumanlar kesimi
+(`GET /api/v1/dashboard/districts`): onlayn/oflayn qurilmalar, me'yordan
+past haroratli kotyollar, ochiq ogohlantirishlar.
+
+---
+
+## 7. Buyruqlar va testlar
 
 ```bash
-npm run start:dev        # watch rejimida
 npm run build            # dist/
-npm run typecheck        # tsc --noEmit
+npm run typecheck
 npm test                 # unit testlar
-npm run migration:run    # migratsiyalarni qo'llash
-npm run migration:show   # holatini ko'rish
+npm run test:e2e         # e2e: alohida «issiqlik_e2e» bazasida, spetsifikatsiyadagi holatlar
+npm run migration:run    # migratsiyalar
 npm run seed             # demo ma'lumot (idempotent)
+npm run import:mfy -- --file <json> [--apply]
 npm run simulate         # ESP32 simulyatori
 ```
 
----
+`test:e2e` bazani `.env` dagi ulanish bilan, lekin **alohida** `issiqlik_e2e`
+nomi bilan yaratadi va har ishga tushishda sxemani noldan quradi — ishchi
+bazaga tegmaydi.
 
-## 6. Fon ishlari (cron, Asia/Tashkent)
+## 8. Fon ishlari (cron, Asia/Tashkent)
 
 | Vaqt | Ish | Nima qiladi |
 |---|---|---|
 | har daqiqa | `StatusWatcherJob` | signal kelmagan kotyollarni «aloqa yo'q» ga o'tkazadi |
 | 03:20 | `MaintenanceJob` | eski telemetriya va muddati o'tgan tokenlarni tozalaydi |
-
-## ESP32 v2.1.0 va masofadan yangilash (OTA)
-
-Ikki datchikli (kirish/chiqish) qurilmalar, qurilma tokenlari va
-proshivkani masofadan tarqatish — **[docs/ESP32-OTA.md](docs/ESP32-OTA.md)**.
-
-U yerda: tokenni qurilmaga qanday berish, yangi `.bin` ni qanday yuklash
-va tarqatish, HTTPS/Let's Encrypt talabi, `curl` bilan tekshirish va
-tez-tez uchraydigan muammolar.
-
-Proshivka manbasi — [`firmware/`](firmware/) papkasida (`pio run` bilan
-yig'iladi). Maxfiy fayllar (`secrets.h`, `tokenlar.csv`) git'ga
-tushmaydi.

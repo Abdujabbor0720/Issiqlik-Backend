@@ -79,7 +79,7 @@ function text(value: Cell): string {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'object') {
     if ('richText' in value) return value.richText.map((t) => t.text).join('');
-    if ('result' in value) return text(value.result as Cell);
+    if ('result' in value) return text(value.result);
     if ('text' in value) return String(value.text);
     return '';
   }
@@ -315,7 +315,13 @@ export interface ImportPlan {
   date: string | null;
   tag: string;
   marker: string;
-  district: { id: string; name: string; code: string; shortName: string };
+  district: {
+    id: string;
+    key: string;
+    name: string;
+    code: string;
+    shortName: string;
+  };
   rows: ImportRowPlan[];
   totals: {
     institutions: number;
@@ -334,14 +340,20 @@ function split(total: number, parts: number): number[] {
   return Array.from({ length: parts }, (_, i) => base + (i < rest ? 1 : 0));
 }
 
+/**
+ * ⚠️ Muassasa katalogi TUMAN ICHIDA yagona (`UQ_organizations_district_name`):
+ * boshqa tumandagi bir xil nomli muassasa bilan adashtirilmaydi.
+ */
 function findOrganization(
   manager: EntityManager,
   name: string,
+  districtKey: string,
 ): Promise<Organization | null> {
   return manager
     .getRepository(Organization)
     .createQueryBuilder('o')
-    .where('LOWER(o.name) = LOWER(:name)', { name })
+    .where('o.district_key = :districtKey', { districtKey })
+    .andWhere('LOWER(o.name) = LOWER(:name)', { name })
     .getOne();
 }
 
@@ -371,7 +383,7 @@ export async function buildImportPlan(
   const rows: ImportRowPlan[] = [];
   for (const row of sheet.rows) {
     const name = `${row.baseName} (${district.shortName})`;
-    const existing = await findOrganization(manager, name);
+    const existing = await findOrganization(manager, name, district.key);
     const existingBoilers = existing
       ? await manager.getRepository(Boiler).count({
           where: { organizationId: existing.id, isArchived: false },
@@ -416,6 +428,7 @@ export async function buildImportPlan(
     marker,
     district: {
       id: district.id,
+      key: district.key,
       name: district.name,
       code: district.code,
       shortName: district.shortName,
@@ -463,12 +476,17 @@ export async function applyImportPlan(
     for (const row of plan.rows) {
       // ⚠️ Lock ostida QAYTA tekshiruv — reja tuzilgandan beri boshqa
       // import yoki odam shu muassasani yaratgan bo'lishi mumkin.
-      const existing = await findOrganization(manager, row.name);
+      const existing = await findOrganization(
+        manager,
+        row.name,
+        plan.district.key,
+      );
       let organizationId = existing?.id ?? null;
       if (!organizationId) {
         const saved = await manager.getRepository(Organization).save(
           manager.getRepository(Organization).create({
             name: row.name,
+            districtKey: plan.district.key,
             note: `${source} ${plan.marker}`,
             objectTypeId: typeIdByCode.get(row.kind) ?? null,
           }),

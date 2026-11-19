@@ -1,4 +1,5 @@
 import { Column, Entity, Index } from 'typeorm';
+import type { DeviceType } from '../../common/constants/enums';
 import { BaseEntity } from './base.entity';
 
 /**
@@ -88,4 +89,69 @@ export class PendingDevice extends BaseEntity {
    */
   @Column({ type: 'boolean', name: 'is_dismissed', default: false })
   isDismissed!: boolean;
+
+  /**
+   * Qurilma turi — `X-Device-Type` sarlavhasidan, bo'lmasa tanadan
+   * (`room_temperature_c` bor → `xona`, kotyol harorati bor → `kotyol`).
+   */
+  @Column({ type: 'varchar', length: 16, name: 'device_type', nullable: true })
+  deviceType!: DeviceType | null;
+
+  /** Plata aytgan tuman — FAQAT tanilgan kalit (`districts.key`). */
+  @Column({
+    type: 'varchar',
+    length: 32,
+    name: 'reported_district',
+    nullable: true,
+  })
+  reportedDistrict!: string | null;
+
+  /** Plata aytgan obyekt turi — FAQAT katalogdagi kod (`school`). */
+  @Column({
+    type: 'varchar',
+    length: 32,
+    name: 'reported_object_type',
+    nullable: true,
+  })
+  reportedObjectType!: string | null;
+
+  /** Plata aytgan muassasa nomi (`institution_name`, erkin matn). */
+  @Column({
+    type: 'varchar',
+    length: 120,
+    name: 'reported_institution',
+    nullable: true,
+  })
+  reportedInstitution!: string | null;
+
+  /**
+   * QURILMA YUBORGAN TOKENNING HASH'I — «bir bosishda ro'yxatga olish» uchun.
+   *
+   * ⚠️⚠️ Ro'yxatga olinganda shu hash qurilmaning shaxsiy kaliti bo'ladi:
+   * dalada turgan plata o'z tokenini o'zgartirmasdan darhol ishlay boshlaydi.
+   * Token O'ZI saqlanmaydi (SHA-256, `devices.api_key_hash` bilan AYNI).
+   */
+  @Column({ type: 'varchar', length: 64, name: 'token_hash', nullable: true })
+  tokenHash!: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 12,
+    name: 'token_preview',
+    nullable: true,
+  })
+  tokenPreview!: string | null;
+
+  /** `shared` — umumiy `DEVICE_SHARED_TOKEN`; `personal` — boshqa har qanday token. */
+  @Column({ type: 'varchar', length: 16, name: 'token_kind', nullable: true })
+  tokenKind!: 'personal' | 'shared' | null;
+
+  /**
+   * ⚠️⚠️ BIR XIL `device_id` BILAN TURLI TOKEN KELGAN. Kimdir haqiqiy
+   * platanining identifikatorini (MAC) o'g'irlab, o'z tokeni bilan so'rov
+   * yuborayotgan bo'lishi mumkin. Bunday so'rov bir bosishda ro'yxatga
+   * olinmaydi — kalit qo'lda kiritilishi kerak.
+   */
+  @Column({ type: 'boolean', name: 'token_conflict', default: false })
+  tokenConflict!: boolean;
 }

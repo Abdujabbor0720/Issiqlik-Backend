@@ -1,10 +1,11 @@
-import { ModuleType } from '../common/constants/enums';
+import { DeviceType } from '../common/constants/enums';
 import {
   extractReportedProfile,
   normalizeObjectTypeKey,
   parseHumidity,
-  parseModuleType,
-  resolveModuleType,
+  parseDeviceType,
+  decideDeviceType,
+  inferDeviceType,
   sanitizeReportedText,
 } from './device-profile.helper';
 import { extractRoomSamples } from './room-reading.helper';
@@ -19,21 +20,21 @@ const ROOM_MODULE_PAYLOAD = {
   room_temperature_c: 24.4,
 };
 
-describe('parseModuleType', () => {
+describe('parseDeviceType', () => {
   it.each([
-    ['room', ModuleType.ROOM],
-    [' ROOM ', ModuleType.ROOM],
-    ['xona', ModuleType.ROOM],
-    ['boiler', ModuleType.BOILER],
-    ['qozonxona', ModuleType.BOILER],
+    ['room', DeviceType.XONA],
+    [' ROOM ', DeviceType.XONA],
+    ['xona', DeviceType.XONA],
+    ['boiler', DeviceType.KOTYOL],
+    ['qozonxona', DeviceType.KOTYOL],
   ])('%p → %p', (raw, expected) => {
-    expect(parseModuleType(raw)).toBe(expected);
+    expect(parseDeviceType(raw)).toBe(expected);
   });
 
   it.each<[unknown]>([[''], ['sensor'], [1], [null], [undefined], [{}]])(
     '⚠️ noma‘lum %p → null (tur o‘zgarmaydi)',
     (raw) => {
-      expect(parseModuleType(raw)).toBeNull();
+      expect(parseDeviceType(raw)).toBeNull();
     },
   );
 });
@@ -134,26 +135,26 @@ describe('extractReportedProfile', () => {
 
   it('⚠️ yaroqsiz qiymat ham `undefined` + rejected — yaxshi qiymatni bosmaydi', () => {
     const profile = extractReportedProfile(
-      { object_type: '<script>', humidity: 'NaN', module_type: 'sensor' },
+      { object_type: '<script>', humidity: 'NaN', device_type: 'sensor' },
       null,
     );
     expect(profile.objectType).toBeUndefined();
     expect(profile.humidity).toBeUndefined();
     expect(profile.declaredType).toBeNull();
     expect(profile.rejected.map((item) => item.field).sort()).toEqual([
+      'device_type',
       'humidity',
-      'module_type',
       'object_type',
     ]);
   });
 
   it('⚠️ X-Module-Type sarlavhasi tanadan USTUN', () => {
     expect(
-      extractReportedProfile({ module_type: 'boiler' }, 'room').declaredType,
-    ).toBe(ModuleType.ROOM);
+      extractReportedProfile({ device_type: 'boiler' }, 'room').declaredType,
+    ).toBe(DeviceType.XONA);
     expect(
-      extractReportedProfile({ module_type: 'room' }, null).declaredType,
-    ).toBe(ModuleType.ROOM);
+      extractReportedProfile({ device_type: 'room' }, null).declaredType,
+    ).toBe(DeviceType.XONA);
   });
 
   it('namlik', () => {
@@ -163,53 +164,48 @@ describe('extractReportedProfile', () => {
   });
 });
 
-describe('resolveModuleType', () => {
-  const base = {
-    declared: null,
-    hasBoilerReading: false,
-    hasRoomReading: false,
-    isBound: false,
-  };
+describe('inferDeviceType', () => {
+  it('room_temperature_c bor — xona', () => {
+    expect(inferDeviceType({ hasRoomTemperatureField: true })).toBe(
+      DeviceType.XONA,
+    );
+  });
+  it('aks holda — kotyol', () => {
+    expect(inferDeviceType({ hasRoomTemperatureField: false })).toBe(
+      DeviceType.KOTYOL,
+    );
+  });
+});
 
-  it('aytilgani har doim ustun', () => {
+describe('decideDeviceType', () => {
+  it('aytilgan tur saqlangandan farq qilsa — yoziladi va ogohlantiriladi', () => {
+    const decision = decideDeviceType({
+      declared: DeviceType.XONA,
+      inferred: DeviceType.KOTYOL,
+      stored: DeviceType.KOTYOL,
+    });
+    expect(decision.next).toBe(DeviceType.XONA);
+    expect(decision.warning).toMatch(/kotyol → xona/);
+  });
+
+  it('aytilgan tur bir xil — jim', () => {
     expect(
-      resolveModuleType({
-        ...base,
-        declared: ModuleType.ROOM,
-        hasBoilerReading: true,
-        isBound: true,
+      decideDeviceType({
+        declared: DeviceType.KOTYOL,
+        inferred: null,
+        stored: DeviceType.KOTYOL,
       }),
-    ).toBe(ModuleType.ROOM);
+    ).toEqual({ next: null, warning: null });
   });
 
-  it('⚠️ 1.0.0 xona moduli (turini aytmaydi) — yukidan `room`', () => {
-    const rooms = extractRoomSamples(ROOM_MODULE_PAYLOAD);
-    expect(
-      resolveModuleType({
-        ...base,
-        hasRoomReading: rooms.source !== undefined,
-      }),
-    ).toBe(ModuleType.ROOM);
-  });
-
-  it('suv harorati bor — `boiler` (xona harorati bo‘lsa ham)', () => {
-    expect(
-      resolveModuleType({
-        ...base,
-        hasBoilerReading: true,
-        hasRoomReading: true,
-      }),
-    ).toBe(ModuleType.BOILER);
-  });
-
-  it('⚠️⚠️ kotyolga ULANGAN qurilmada xulosa chiqarilmaydi', () => {
-    expect(
-      resolveModuleType({ ...base, hasRoomReading: true, isBound: true }),
-    ).toBeNull();
-  });
-
-  it('hech narsa yo‘q — null', () => {
-    expect(resolveModuleType(base)).toBeNull();
+  it('⚠️⚠️ tanadan xulosa saqlangan turni O‘ZGARTIRMAYDI (faqat ogohlantirish)', () => {
+    const decision = decideDeviceType({
+      declared: null,
+      inferred: DeviceType.KOTYOL,
+      stored: DeviceType.XONA,
+    });
+    expect(decision.next).toBeNull();
+    expect(decision.warning).toMatch(/O‘ZGARTIRILMADI/);
   });
 });
 

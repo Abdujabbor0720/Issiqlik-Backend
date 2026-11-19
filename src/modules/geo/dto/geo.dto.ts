@@ -1,6 +1,17 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsArray, IsOptional, IsUUID } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { toArray } from '../../../common/dto/transforms';
 
 export class MapQueryDto {
@@ -18,6 +29,8 @@ export class MapQueryDto {
 /** Xaritadagi bitta tuman ustida ko'rinadigan raqamlar. */
 export interface DistrictStats {
   districtId: string;
+  /** Proshivka kaliti (`asaka`). */
+  key: string;
   code: string;
   name: string;
   shortName: string;
@@ -74,4 +87,48 @@ export interface BoilerPoint {
     /** Minimumdan past xonalar soni. */
     cold: number;
   } | null;
+}
+
+/**
+ * YANGI TUMAN. ⚠️ `key` — proshivka menyusidagi kalit bilan AYNI bo'lishi
+ * shart va keyin o'zgartirilmaydi.
+ */
+export class CreateDistrictDto {
+  @ApiProperty({ example: 'yangi-tuman', description: 'Proshivka kaliti' })
+  @Matches(/^[a-z][a-z0-9-]{1,31}$/, {
+    message: 'Kalit: kichik lotin harflari, raqam va «-», 2–32 belgi',
+  })
+  key!: string;
+
+  @ApiProperty({ example: 'Yangi tumani' })
+  @IsString()
+  @MaxLength(160)
+  name!: string;
+
+  @ApiPropertyOptional({ example: 'Yangi' })
+  @IsString()
+  @MaxLength(120)
+  @IsOptional()
+  shortName?: string;
+
+  @ApiProperty({ enum: ['city', 'district'] })
+  @IsIn(['city', 'district'])
+  kind!: 'city' | 'district';
+
+  @ApiPropertyOptional({ example: '1703250' })
+  @Matches(/^\d{4,10}$/)
+  @IsOptional()
+  soato?: string;
+
+  @ApiProperty({ example: 40.78 })
+  @IsNumber()
+  @Min(39)
+  @Max(42)
+  centerLat!: number;
+
+  @ApiProperty({ example: 72.34 })
+  @IsNumber()
+  @Min(70)
+  @Max(74)
+  centerLng!: number;
 }

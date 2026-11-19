@@ -6,8 +6,10 @@ import {
   Organization,
 } from '../../database/entities/catalog.entities';
 import { Device } from '../../database/entities/device.entity';
+import { OtaEvent } from '../../database/entities/firmware.entities';
 import { PendingDevice } from '../../database/entities/pending-device.entity';
 import { BoilersModule } from '../boilers/boilers.module';
+import { GeoModule } from '../geo/geo.module';
 import { BoilerSetupController } from './boiler-setup.controller';
 import { BoilerSetupService } from './boiler-setup.service';
 import { DeviceAuthService } from './device-auth.service';
@@ -31,9 +33,12 @@ import { PendingDevicesService } from './pending-devices.service';
       PendingDevice,
       Organization,
       ObjectType,
+      OtaEvent,
     ]),
     // ⚠️ «Kotyol + modul» kotyol tekshiruvlarini `BoilersService` dan oladi.
     BoilersModule,
+    // ⚠️ Tuman / obyekt turi ma'lumotnomalari (kalit → yozuv, kesh bilan).
+    GeoModule,
   ],
   controllers: [DevicesController, BoilerSetupController],
   providers: [

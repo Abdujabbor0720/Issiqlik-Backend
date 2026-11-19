@@ -30,21 +30,46 @@ export class DistrictDirectoryService {
     return matchDistrict(raw, await this.all());
   }
 
-  private async all(): Promise<DistrictRecord[]> {
+  /** Kalit bo'yicha (`asaka`). Noma'lum kalit — `null`. */
+  async byKey(key: string | null | undefined): Promise<DistrictRecord | null> {
+    if (!key) return null;
+    return (await this.all()).find((item) => item.key === key) ?? null;
+  }
+
+  async byId(id: string | null | undefined): Promise<DistrictRecord | null> {
+    if (!id) return null;
+    return (await this.all()).find((item) => item.id === id) ?? null;
+  }
+
+  /** ⚠️ Yangi tuman qo'shilganda keshni darhol yangilash uchun. */
+  invalidate(): void {
+    this.cache = null;
+  }
+
+  async all(): Promise<DistrictRecord[]> {
     const now = Date.now();
     if (this.cache && now - this.cache.at < DistrictDirectoryService.TTL_MS) {
       return this.cache.items;
     }
     const rows = await this.districts.find({
-      select: { id: true, code: true, soato: true, name: true },
+      select: {
+        id: true,
+        key: true,
+        code: true,
+        soato: true,
+        name: true,
+        shortName: true,
+      },
     });
     this.cache = {
       at: now,
       items: rows.map((row) => ({
         id: row.id,
+        key: row.key,
         code: row.code,
         soato: row.soato,
         name: row.name,
+        shortName: row.shortName,
       })),
     };
     return this.cache.items;

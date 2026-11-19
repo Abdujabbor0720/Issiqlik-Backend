@@ -1,4 +1,4 @@
-// ESP32 + 2x DS18B20 (kirish/chiqish) -> HTTPS POST (JSON) -> Xonobod issiqlik monitoringi paneli
+// ESP32 + 2x DS18B20 (kirish/chiqish) -> HTTPS POST (JSON) -> Andijon viloyati issiqlik monitoring tizimi
 // Serial buyruqlar (115200): i - holat, m - hozir o'lchab yuborish, s - datchiklarni qayta qidirish,
 //   w - telefondan sozlash rejimi, n - Wi-Fi tarmoqlari, o - barcha pinlarda DS18B20 qidirish, p - pinlarni kuzatish,
 //   u - yangilanishni hozir tekshirish, r - qayta ishga tushirish,

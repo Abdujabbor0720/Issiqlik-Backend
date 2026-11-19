@@ -25,6 +25,19 @@ export class District extends BaseEntity {
   @Column({ type: 'varchar', length: 64 })
   code!: string;
 
+  /**
+   * PROSHIVKA KALITI — `andijon-sh`, `xonobod-sh`, `boz`, `asaka`, …
+   *
+   * ⚠️⚠️ Qurilma sozlash sahifasida tanlangan tuman aynan shu kalit bilan
+   * keladi va kalitlar PROSHIVKADA QOTIRILGAN. Ichki `code`
+   * (`andijon_sh`) bilan chalkashtirmang: u tarixiy, bu esa kontrakt.
+   * Yangi jadvallar (`mahallas`, `organizations`) tumanga shu kalit orqali
+   * bog'lanadi; eski jadvallar UUID orqali (PK almashtirilmagan).
+   */
+  @Index('UQ_districts_key', { unique: true })
+  @Column({ type: 'varchar', length: 32 })
+  key!: string;
+
   /** To'liq nom: «Jalaquduq tumani». */
   @Column({ type: 'varchar', length: 160 })
   name!: string;

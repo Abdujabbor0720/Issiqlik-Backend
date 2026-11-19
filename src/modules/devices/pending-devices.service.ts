@@ -1,11 +1,32 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { DeviceType, UserRole } from '../../common/constants/enums';
+import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { PendingDevice } from '../../database/entities/pending-device.entity';
+import { DistrictDirectoryService } from '../geo/district-directory.service';
+import { ObjectTypeDirectoryService } from '../geo/object-type-directory.service';
 
 export interface PendingDeviceRow {
   id: string;
   deviceId: string;
+  /** `X-Device-Type` yoki tanadan aniqlangan tur. */
+  deviceType: DeviceType | null;
+  /** Plata aytgan tuman (tanilgan kalit) va obyekt turi — nomi bilan. */
+  district: { id: string; key: string; name: string } | null;
+  objectType: { id: string; code: string; name: string } | null;
+  /** `institution_name` (yangi proshivka). */
+  institutionName: string | null;
+  /** `token_conflict` — bir bosishda ro'yxatga olib bo'lmaydi. */
+  tokenConflict: boolean;
+  tokenKind: 'personal' | 'shared' | null;
+  tokenPreview: string | null;
+  isDismissed: boolean;
   institutionHint: string | null;
   firmwareVersion: string | null;
   lastIpAddress: string | null;
@@ -35,6 +56,8 @@ export class PendingDevicesService {
   constructor(
     @InjectRepository(PendingDevice)
     private readonly repo: Repository<PendingDevice>,
+    private readonly districts: DistrictDirectoryService,
+    private readonly objectTypes: ObjectTypeDirectoryService,
   ) {}
 
   /**
@@ -45,24 +68,72 @@ export class PendingDevicesService {
    * qurilma; 3 marta urinib qolgani esa ehtimol sinov yoki tasodif.
    * Vaqt bo'yicha saralansa, eng muhim yozuv pastga tushib ketardi.
    */
-  async list(): Promise<PendingDeviceRow[]> {
-    const rows = await this.repo.find({
-      where: { isDismissed: false },
-      order: { attempts: 'DESC', lastSeenAt: 'DESC' },
-      take: 200,
-    });
+  /**
+   * ⚠️⚠️ TUMAN MAS'ULI faqat plata O'Z tumanini aytgan so'rovlarni ko'radi
+   * (API darajasida). Tumanini aytmagan yangi qurilmalar — faqat viloyat
+   * adminiga.
+   */
+  async list(
+    user?: AuthUser,
+    includeDismissed = false,
+  ): Promise<PendingDeviceRow[]> {
+    const qb = this.repo
+      .createQueryBuilder('pending')
+      .orderBy('pending.last_seen_at', 'DESC')
+      .take(200);
+    if (!includeDismissed) qb.where('pending.is_dismissed = false');
+    if (user?.role === UserRole.OPERATOR) {
+      const own = await this.districts.byId(user.districtId);
+      if (!own) {
+        throw new ForbiddenException(
+          'Hisobingizga tuman biriktirilmagan — administratorga murojaat qiling',
+        );
+      }
+      qb.andWhere('pending.reported_district = :own', { own: own.key });
+    }
+    const rows = await qb.getMany();
 
-    return rows.map((row) => ({
-      id: row.id,
-      deviceId: row.deviceId,
-      institutionHint: row.institutionHint,
-      firmwareVersion: row.firmwareVersion,
-      lastIpAddress: row.lastIpAddress,
-      attempts: row.attempts,
-      // ⚠️ Birinchi ko'rilgan vaqt — `createdAt` (BaseEntity dan).
-      firstSeenAt: row.createdAt,
-      lastSeenAt: row.lastSeenAt,
-    }));
+    return Promise.all(
+      rows.map(async (row) => {
+        const district = await this.districts.byKey(row.reportedDistrict);
+        const type = await this.objectTypes.resolve(row.reportedObjectType);
+        return {
+          id: row.id,
+          deviceId: row.deviceId,
+          deviceType: row.deviceType,
+          district: district
+            ? { id: district.id, key: district.key, name: district.name }
+            : null,
+          objectType: type
+            ? { id: type.id, code: type.code, name: type.name }
+            : null,
+          institutionName: row.reportedInstitution,
+          tokenConflict: row.tokenConflict,
+          tokenKind: row.tokenKind,
+          tokenPreview: row.tokenPreview,
+          isDismissed: row.isDismissed,
+          institutionHint: row.institutionHint,
+          firmwareVersion: row.firmwareVersion,
+          lastIpAddress: row.lastIpAddress,
+          attempts: row.attempts,
+          firstSeenAt: row.createdAt,
+          lastSeenAt: row.lastSeenAt,
+        };
+      }),
+    );
+  }
+
+  /** Tuman mas'uli begona tuman so'roviga tega olmaydi. */
+  async assertVisible(id: string, user?: AuthUser): Promise<PendingDevice> {
+    const row = await this.repo.findOne({ where: { id } });
+    if (!row) throw new NotFoundException('So‘rov topilmadi');
+    if (user?.role === UserRole.OPERATOR) {
+      const own = await this.districts.byId(user.districtId);
+      if (!own || row.reportedDistrict !== own.key) {
+        throw new NotFoundException('So‘rov topilmadi');
+      }
+    }
+    return row;
   }
 
   /** Ochiq so'rovlar soni — kabinetdagi bildirishnoma uchun. */

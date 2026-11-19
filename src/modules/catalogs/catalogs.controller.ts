@@ -35,6 +35,7 @@ const KINDS: CatalogKind[] = [
   'firms',
   'organizations',
   'object-types',
+  'mahallas',
 ];
 
 /**
@@ -53,8 +54,12 @@ export class CatalogsController {
   @RequirePermissions(PERMISSIONS.CATALOGS_VIEW)
   @ApiParam({ name: 'kind', enum: KINDS })
   @ApiOperation({ summary: 'Katalog ro‘yxati' })
-  list(@Param('kind') kind: string, @Query() query: CatalogQueryDto) {
-    return this.service.list(this.assertKind(kind), query);
+  list(
+    @Param('kind') kind: string,
+    @Query() query: CatalogQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.list(this.assertKind(kind), query, user);
   }
 
   @Post(':kind')

@@ -67,7 +67,7 @@ function usable(value: number | null | undefined): number | null {
  * yozaveramiz» deb yozib qo'yardi va butun viloyat holati
  * ~20 °C pastga siljirdi.
  *
- * ⚠️⚠️ XONOBOD PANELIDAGI XATONI TAKRORLAMAYDI. U yerda
+ * ⚠️⚠️ ESKI PANELDAGI XATONI TAKRORLAMAYDI. U yerda
  * (`worker.js:218`) juftlik kelganda KIRISH harorati asosiy ustunga
  * yoziladi:
  *     paired ? inlet_temperature_c : temperature_c
@@ -146,7 +146,7 @@ export function classifyProbeReading(
 
     /*
      * ⚠️ ISHORA YO'Q — `UNKNOWN`. Qiymat CHIQISH deb olinadi, chunki
-     * eski proshivkalar (`modul1` va Xonobod v1.x) aynan chiqish
+     * eski proshivkalar (`modul1` va birinchi avlod v1.x) aynan chiqish
      * haroratini yuboradi (§3: «probe'siz temperature_c ni
      * "noma'lum datchik" deb saqla»). Lekin bu TAXMIN va `UNKNOWN`
      * holati uni belgilab turadi: grafikda ham, kotyol kartasida

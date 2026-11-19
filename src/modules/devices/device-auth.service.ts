@@ -7,17 +7,23 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AuditAction, ModuleType } from '../../common/constants/enums';
+import { AuditAction, DeviceType } from '../../common/constants/enums';
 import { Device } from '../../database/entities/device.entity';
 import { PendingDevice } from '../../database/entities/pending-device.entity';
 import { isUniqueViolation } from '../../helpers/db-errors.helper';
+import { decideDeviceType } from '../../helpers/device-profile.helper';
 import { AuditService } from '../audit/audit.service';
 import { DeviceKeyService } from './device-key.service';
 
-/** Token qanday tekshirilgani — jurnal va kabinet uchun. */
 export type TokenKind = 'personal' | 'shared';
 
-/** Autentifikatsiya natijasida kerak bo'ladigan minimal to'plam. */
+/**
+ * Autentifikatsiyadan keyin servislarga beriladigan qurilma ko'rinishi.
+ *
+ * ⚠️ `apiKeyHash` bu yerda YO'Q: u faqat tekshiruv uchun o'qiladi va
+ * qurilma obyekti telemetriya servisi bo'ylab tarqaladi — hash tasodifan
+ * jurnalga yoki javobga tushib qolmasligi kerak.
+ */
 export type AuthenticatedDevice = Pick<
   Device,
   | 'id'
@@ -28,18 +34,15 @@ export type AuthenticatedDevice = Pick<
   | 'allowSharedToken'
   | 'firmwareVersion'
   | 'districtId'
+  | 'organizationId'
   | 'reportedDistrict'
-  | 'moduleType'
+  | 'deviceType'
   | 'reportedMfy'
   | 'reportedInstitution'
   | 'reportedObjectType'
+  | 'lastTokenKind'
 >;
 
-/**
- * Autentifikatsiyada o'qiladigan ustunlar — `authenticate` va avtomatik
- * ro'yxatga olishdagi poyga yo'li uchun BITTA ro'yxat (ikki nusxa bo'lsa,
- * yangi maydon ulardan faqat biriga qo'shilib qolardi).
- */
 const AUTH_SELECT = {
   id: true,
   deviceId: true,
@@ -50,11 +53,13 @@ const AUTH_SELECT = {
   boilerId: true,
   isActive: true,
   districtId: true,
+  organizationId: true,
   reportedDistrict: true,
-  moduleType: true,
+  deviceType: true,
   reportedMfy: true,
   reportedInstitution: true,
   reportedObjectType: true,
+  lastTokenKind: true,
 } as const;
 
 export interface DeviceAuthResult {
@@ -62,69 +67,52 @@ export interface DeviceAuthResult {
   tokenKind: TokenKind;
 }
 
-/** So'rov bilan birga kelgan qo'shimcha ma'lumot. */
+/**
+ * So'rov haqidagi qo'shimcha ma'lumot — FAQAT «Yangi qurilmalar»
+ * ro'yxati uchun. Ro'yxatdagi qurilmaning joylashuviga bu yerda TEGILMAYDI.
+ */
 export interface DeviceRequestMeta {
   ip: string | null;
   firmwareVersion: string | null;
+  /** Eski proshivkaning `institution_id` (`maktab-4`). */
   institutionHint?: string | null;
-  /**
-   * Plata yuborgan tuman — ALLAQACHON aniqlangan (`DistrictDirectoryService`).
-   * Faqat avtomatik ro'yxatga olishda yoziladi; mavjud qurilmaning
-   * tumanini telemetriya servisi yangilaydi (ajratish qoidasi bilan).
-   */
-  districtId?: string | null;
-  /** Plata yuborgan xom qiymat. */
-  reportedDistrict?: string | null;
-  /**
-   * Modul turi — FAQAT avtomatik ro'yxatga olishda yoziladi. Mavjud
-   * qurilmaning turini `applyModuleType()` o'zgartiradi (kotyol qoidasi
-   * bilan).
-   */
-  moduleType?: ModuleType | null;
+  /** Aytilgan (`X-Device-Type`) yoki tanadan aniqlangan tur. */
+  deviceType?: DeviceType | null;
+  /** Plata aytgan joylashuv — allaqachon TEKSHIRILGAN (tanilgan kalitlar). */
+  reportedDistrictKey?: string | null;
+  reportedObjectType?: string | null;
+  reportedInstitution?: string | null;
 }
 
 /**
  * KUTISH RO'YXATI CHEGARASI.
  *
- * ⚠️⚠️ BUSIZ JADVAL HUJUM VOSITASIGA AYLANARDI: begona odam har
- * so'rovda YANGI tasodifiy `device_id` yuborib, jadvalni cheksiz
- * to'ldirib, diskni to'ldirib qo'yishi mumkin bo'lardi (har bir yangi
- * identifikator — yangi qator). Chegaraga yetgandan keyin yangi
- * yozuvlar QABUL QILINMAYDI, faqat jurnalga tushadi.
+ * ⚠️ Begona odam tasodifiy identifikatorlar bilan so'rov yuborib, jadvalni
+ * cheksiz to'ldirishi mumkin. Chegaraga yetganda YANGI qator yozilmaydi,
+ * mavjudlari esa yangilanaveradi.
  */
 const PENDING_DEVICES_LIMIT = 200;
 
-/**
- * QURILMA AUTENTIFIKATSIYASI — BUTUN TIZIMDA YAGONA joy.
- *
- * ⚠️⚠️ NIMA UCHUN ALOHIDA SERVIS. Qurilma serverga IKKI XIL maqsadda
- * murojaat qiladi va ularni IKKI XIL modul qabul qiladi:
- *   • telemetriya  → `TelemetryService.ingest`;
- *   • OTA          → `OtaService.check / download / report`.
- * Agar har biri tokenni O'ZICHA tekshirsa, ikki nusxa bir-biridan
- * asta-sekin ajralib ketardi — va bu ODDIY xato emas, XAVFSIZLIK
- * xatosi bo'lardi: masalan umumiy token taqiqlangani telemetriyada
- * tuzatilib, OTA'da ochiq qolishi mumkin edi. OTA esa ancha
- * xavflisi: u orqali qurilmaga YANGI KOD yuboriladi.
- *
- * ⚠️ Shu sababli bu yerda faqat QAROR qabul qilinadi, biznes mantig'i
- * yo'q: servis qurilmani topadi, tokenni tekshiradi va mos HTTP
- * xatosini tashlaydi.
- */
-/**
- * UNIQUE INDEKS BUZILISHI (PostgreSQL `23505`).
- *
- * ⚠️ Bu yerda NORMAL holat: ikki so'rov bir vaqtda ayni qurilmani
- * yaratishga urinsa, ikkinchisi shu xatoni oladi. Natija kerakli —
- * qator bazada. Kod IKKI joydan o'qiladi: TypeORM asl `pg` xatosini
- * `driverError` ichiga o'raydi, lekin ayrim yo'llarda u
- * to'g'ridan-to'g'ri obyektda bo'ladi.
- */
-// ⚠️ `isUniqueViolation` — `helpers/db-errors.helper.ts` (yagona manba).
+/** Bir xil ogohlantirish bitta qurilma uchun shundan tez-tez yozilmaydi. */
+const TYPE_WARN_INTERVAL_MS = 30 * 60_000;
 
+/**
+ * QURILMA AUTENTIFIKATSIYASI — telemetriya ham, OTA ham SHU YERDAN o'tadi.
+ *
+ * Javob kodlari (qurilma xatti-harakati shunga bog'liq, §4):
+ *   • 401 — token yo'q yoki xato;
+ *   • 403 — qurilma ro'yxatda yo'q → «Yangi qurilmalar» ro'yxatiga yoziladi.
+ *
+ * ⚠️⚠️ AVTOMATIK RO'YXATGA OLISH YO'Q. Ro'yxatda yo'q `device_id` HAR DOIM
+ * 403 oladi — hatto to'g'ri umumiy token bilan ham. Qurilmani faqat admin
+ * «Yangi qurilmalar» dan bir bosishda ro'yxatga oladi va joylashuvini
+ * tasdiqlaydi. Busiz umumiy token sizib chiqsa, begona odam viloyat
+ * paneliga istalgancha soxta qurilma qo'sha olardi.
+ */
 @Injectable()
 export class DeviceAuthService {
   private readonly logger = new Logger(DeviceAuthService.name);
+  private readonly typeWarnedAt = new Map<string, number>();
 
   constructor(
     @InjectRepository(Device) private readonly devices: Repository<Device>,
@@ -135,28 +123,16 @@ export class DeviceAuthService {
     private readonly audit: AuditService,
   ) {}
 
-  /**
-   * QURILMANI TANIB OLISH.
-   *
-   * @throws UnauthorizedException (401) — token yo'q, noto'g'ri yoki
-   *   qurilma faolsizlantirilgan.
-   * @throws ForbiddenException (403) — qurilma ro'yxatda yo'q; so'rov
-   *   kutish ro'yxatiga yoziladi.
-   */
   async authenticate(
     deviceId: string | null | undefined,
     token: string | null,
     meta: DeviceRequestMeta,
   ): Promise<DeviceAuthResult> {
+    // ⚠️ Token BIRINCHI: tokensiz so'rov hech qachon 403 / kutish ro'yxatiga yetmaydi.
     if (!token) {
       throw new UnauthorizedException('Qurilma tokeni yuborilmagan');
     }
     if (!deviceId) {
-      /*
-       * ⚠️ 400 EMAS, 401: identifikatorsiz so'rov autentifikatsiyadan
-       * o'tmaydi va uni «yuk formati buzuq» deb ko'rsatish qurilmaga
-       * «o'lchovni tashla» degan noto'g'ri ishora berardi.
-       */
       throw new UnauthorizedException('Qurilma identifikatori yuborilmagan');
     }
 
@@ -165,84 +141,17 @@ export class DeviceAuthService {
       select: AUTH_SELECT,
     });
 
-    /*
-     * ⚠️⚠️ RO'YXATDA YO'Q QURILMA → 403 va KUTISH RO'YXATIGA yoziladi.
-     *
-     * Texnik topshiriq (§3) aynan shuni talab qiladi: «Ro'yxatda yo'q
-     * device_id → 403 va dashboardda "yangi qurilma so'rayapti"
-     * belgisi». Montajchi platani o'rnatib ketgan, kabinetda esa u
-     * hali ro'yxatga kiritilmagan bo'lishi mumkin — signallari izsiz
-     * yo'qolmasligi kerak.
-     *
-     * ⚠️ OSHKORLIK HAQIDA ONGLI KELISHUV: 403 (qurilma yo'q) va 401
-     * (token xato) farq qilgani uchun, to'g'ri token egasi qaysi
-     * identifikatorlar bazada borligini bilib olishi mumkin.
-     * Identifikator MAC'dan olinadi (`esp32-` + 12 hex ≈ 2⁴⁸ variant)
-     * — uni taxmin qilib bo'lmaydi, bilgani bilan ham tokensiz hech
-     * narsa qilolmaydi. Kabinetdagi «yangi qurilma» bildirishnomasi
-     * esa dala ishi uchun ZARUR.
-     */
     if (!device) {
-      /*
-       * ⚠️⚠️ AVTOMATIK RO'YXATGA OLISH — faqat UMUMIY TOKEN bilan.
-       *
-       * Viloyatda yuzlab, keyinchalik mingga yaqin plata bo'ladi.
-       * Har biriga qo'lda token yozish amalda imkonsiz: montajchi
-       * har plata uchun administratorga murojaat qilishi kerak
-       * bo'lardi va o'rnatish ishi shu yerda to'xtab qolardi.
-       *
-       * Shuning uchun proshivkaga BITTA umumiy token qo'yiladi va
-       * qurilma o'zini serverga o'zi tanitadi.
-       *
-       * ⚠️⚠️ XAVF ONGLI RAVISHDA CHEKLANGAN. Token sizib chiqsa,
-       * begona odam soxta qurilma yarata oladi — LEKIN u
-       * KOTYOLGA BIRIKTIRILMAGAN bo'ladi (`boilerId: null`).
-       * Biriktirilmagan qurilmaning o'lchovi hech qaysi kotyolning
-       * holatini, xaritasini yoki hisobotini O'ZGARTIRMAYDI
-       * (`telemetry.service.ts` da `if (device.boilerId)` sharti).
-       * Ya'ni eng yomon natija — ro'yxatda keraksiz qator.
-       *
-       * ⚠️ Umumiy token `.env` da bo'sh bo'lsa, bu tarmoq UMUMAN
-       * ishlamaydi va eski xatti-harakat (403 + kutish ro'yxati)
-       * saqlanadi. Ya'ni mexanizmni yoqish — ongli qaror.
-       */
-      const enrolled = await this.tryAutoEnroll(deviceId, token, meta);
-      if (enrolled) return { device: enrolled, tokenKind: 'shared' };
-
-      await this.notePending(deviceId, meta);
+      await this.notePending(deviceId, token, meta);
       throw new ForbiddenException(
-        'Qurilma ro‘yxatda yo‘q — kabinetda tasdiqlanishi kerak',
+        'Qurilma ro‘yxatda yo‘q — panelda «Yangi qurilmalar» bo‘limidan tasdiqlanishi kerak',
       );
     }
 
     const tokenKind = this.verifyToken(token, device);
-
-    /*
-     * ⚠️ «Qurilma topilmadi» va «kalit noto'g'ri» uchun xabar BIR XIL
-     * bo'lib qolaveradi — bu yerda qurilma MAVJUD, demak farq faqat
-     * tokendagi. Noaniq xabar brute-force urinishlarini
-     * qiyinlashtiradi.
-     */
     if (!tokenKind) {
       throw new UnauthorizedException(
         'Qurilma identifikatori yoki kaliti noto‘g‘ri',
-      );
-    }
-
-    /*
-     * ⚠️⚠️ UMUMIY TOKEN HAR ISHLATILISHIDA JURNALGA YOZILADI.
-     * U — ko'chish davri uchun vaqtincha yechim va uning qachon,
-     * qaysi qurilmada ishlatilgani KO'RINIB turishi kerak: aks holda
-     * «hammasi shaxsiy tokenga o'tdi» deb o'ylab, aslida o'nlab
-     * qurilma eng zaif usulda ishlab turardi.
-     *
-     * ⚠️ TOKENNING O'ZI YOZILMAYDI (§4: «Tokenlar va maxfiy
-     * ma'lumotlar logga yozilmasin») — faqat qurilma identifikatori.
-     */
-    if (tokenKind === 'shared') {
-      this.logger.warn(
-        `Qurilma ${device.deviceId} UMUMIY token bilan ulandi — ` +
-          'shaxsiy token berilishi kerak',
       );
     }
 
@@ -250,156 +159,56 @@ export class DeviceAuthService {
       throw new UnauthorizedException('Qurilma faolsizlantirilgan');
     }
 
-    return { device, tokenKind };
-  }
-
-  /**
-   * UMUMIY TOKEN BILAN KELGAN NOTANISH QURILMANI RO'YXATGA OLISH.
-   *
-   * @returns Yaratilgan qurilma, yoki `null` — mexanizm o'chiq,
-   *   token mos emas yoki chegara to'lgan.
-   */
-  private async tryAutoEnroll(
-    deviceId: string,
-    token: string,
-    meta: DeviceRequestMeta,
-  ): Promise<AuthenticatedDevice | null> {
-    const shared = this.sharedToken();
-    // ⚠️ `.env` da bo'sh — mexanizm butunlay o'chiq.
-    if (!shared) return null;
-
-    // ⚠️ Vaqt bo'yicha DOIMIY taqqoslash (`timingSafeEqual`).
-    if (!this.keys.matches(token, this.keys.hash(shared))) return null;
-
-    /*
-     * ⚠️⚠️ CHEGARA — TOKEN SIZIB CHIQQAN HOLAT UCHUN.
-     *
-     * Busiz tokenni bilgan odam cheksiz soxta qurilma yaratib,
-     * jadvalni va diskni to'ldirib qo'yardi. Chegaraga yetilganda
-     * yangi qurilma yaratilmaydi, lekin jurnalga YOZILADI — ya'ni
-     * holat jimgina o'tib ketmaydi.
-     *
-     * ⚠️ Chegara FAQAT avtomatik yaratilganlarni sanaydi emas,
-     * UMUMIY sonni sanaydi: qo'lda kiritilgan qurilmalar ham
-     * parkning bir qismi va haqiqiy chegara — park hajmi.
-     */
-    const max = this.config.get<number>('telemetry.autoEnrollMax') ?? 0;
-    if (max > 0) {
-      const total = await this.devices.count();
-      if (total >= max) {
-        this.logger.error(
-          `Avtomatik ro‘yxatga olish chegarasi to‘ldi (${total}/${max}) — ` +
-            `${deviceId} yaratilmadi. Chegara: DEVICE_AUTO_ENROLL_MAX`,
+    // ⚠️ Faqat O'ZGARGANDA yoziladi — har signalda UPDATE bo'lmasligi uchun.
+    if (device.lastTokenKind !== tokenKind) {
+      await this.devices
+        .update(device.id, { lastTokenKind: tokenKind })
+        .catch(() => undefined);
+      if (tokenKind === 'shared') {
+        this.logger.warn(
+          `Qurilma ${device.deviceId} UMUMIY token bilan ulandi — ` +
+            'shaxsiy token berish tavsiya qilinadi',
         );
-        return null;
       }
+      device.lastTokenKind = tokenKind;
     }
 
-    /*
-     * ⚠️⚠️ SHAXSIY KALIT TASODIFIY YARATILADI va HECH KIMGA
-     * KO'RSATILMAYDI. Ustun `NOT NULL`, shuning uchun qiymat
-     * baribir kerak — lekin uni hech kim bilmagani ma'qul:
-     * qurilma umumiy token bilan ishlaydi, administrator esa
-     * xohlagan paytda «Kalitni almashtirish» bilan shaxsiyga
-     * o'tkazadi va o'shanda yangi kalit BIR MARTA ko'rsatiladi.
-     */
-    const personalKey = this.keys.generate();
-
-    try {
-      const created = await this.devices.save(
-        this.devices.create({
-          deviceId,
-          name: null,
-          // ⚠️⚠️ KOTYOLGA BIRIKTIRILMAYDI. Avtomatik biriktirish
-          //    qilinsa, soxta qurilma haqiqiy qozonxonaning
-          //    holatini buzib yuborardi. Biriktirish — ONGLI,
-          //    administrator qaroriga qoladi.
-          boilerId: null,
-          apiKeyHash: this.keys.hash(personalKey),
-          apiKeyPreview: this.keys.preview(personalKey),
-          allowSharedToken: true,
-          institutionHint: meta.institutionHint ?? null,
-          /*
-           * ⚠️ TUMAN — plata menyusida tanlangani. Shu tufayli yangi
-           * modul darhol O'Z tumani mas'ulining «Biriktirilmagan»
-           * ro'yxatiga tushadi va boshqa tumanga ko'rinmaydi.
-           */
-          districtId: meta.districtId ?? null,
-          reportedDistrict: meta.reportedDistrict ?? null,
-          /*
-           * ⚠️ Tur — plata aytgani yoki yukidan aniqlangani. Noma'lum bo'lsa
-           * `boiler` (eski proshivkalar turini aytmaydi); xona moduli keyingi
-           * signalidayoq o'z turiga o'tadi (`applyModuleType`).
-           */
-          moduleType: meta.moduleType ?? ModuleType.BOILER,
-          firmwareVersion: meta.firmwareVersion ?? null,
-          lastIpAddress: meta.ip?.slice(0, 45) ?? null,
-          note: 'Avtomatik ro‘yxatga olindi (umumiy token)',
-          isActive: true,
-        }),
-      );
-
-      this.logger.log(
-        `Yangi qurilma avtomatik ro‘yxatga olindi: ${deviceId}` +
-          (meta.institutionHint ? ` (${meta.institutionHint})` : '') +
-          ' — kotyolga biriktirilmagan',
-      );
-
-      // ⚠️ Kutish ro'yxatida turgan bo'lsa, yopiladi.
-      await this.closePendingQuietly(deviceId);
-
-      return created;
-    } catch (error) {
-      /*
-       * ⚠️ POYGA: ikki so'rov bir vaqtda kelib, ikkalasi ham
-       * «qurilma yo'q» deb ko'rsa, ikkinchisi unique indeksga
-       * uriladi. Bu xato EMAS — qator allaqachon bor, uni o'qib
-       * qaytaramiz.
-       */
-      if (!isUniqueViolation(error)) throw error;
-
-      return this.devices.findOne({
-        where: { deviceId },
-        select: AUTH_SELECT,
-      });
-    }
+    const { apiKeyHash: _hash, ...safe } = device;
+    void _hash;
+    return { device: safe, tokenKind };
   }
 
   /**
-   * MODUL TURINI YANGILASH — telemetriya va OTA uchun BITTA joy.
+   * QURILMA TURINI SAQLASH (`decideDeviceType` qoidasi bilan).
    *
-   * ⚠️⚠️ «Bitta kotyolga bitta QOZONXONA moduli» (`UQ_devices_one_boiler_module`).
-   * Kotyolga ulangan xona moduli `boiler` ga o'tsa va o'sha kotyolda
-   * boshqa qozonxona moduli bo'lsa, yozuv unique indeksga urilardi —
-   * qurilma esa 500 olib, o'lchovni qayta-qayta yuborardi. Shuning uchun
-   * yozuv SHARTLI (`NOT EXISTS`) va to'qnashuvda tur O'ZGARMAYDI, faqat
-   * jurnalga yoziladi: kotyoldagi haqiqiy qozonxona moduli siqib
-   * chiqarilmasligi kerak.
-   *
-   * ⚠️ XATO YUTILADI: tur — yon ma'lumot, o'lchovni rad etmasligi kerak.
+   * ⚠️⚠️ Bitta kotyolga bitta KOTYOL moduli: xona moduli «kotyol» bo'lib
+   * qolsa va kotyolda boshqa kotyol moduli bo'lsa, tur o'zgartirilmaydi.
    *
    * @returns Tur haqiqatan o'zgardimi.
    */
-  async applyModuleType(
+  async applyDeviceType(
     device: AuthenticatedDevice,
-    next: ModuleType | null,
+    input: { declared: DeviceType | null; inferred: DeviceType | null },
   ): Promise<boolean> {
-    if (!next || device.moduleType === next) return false;
-    const previous = device.moduleType;
+    const decision = decideDeviceType({ ...input, stored: device.deviceType });
+    if (decision.warning) this.warnType(device.deviceId, decision.warning);
+    const next = decision.next;
+    if (!next) return false;
 
+    const previous = device.deviceType;
     try {
       const qb = this.devices
         .createQueryBuilder()
         .update(Device)
-        .set({ moduleType: next })
+        .set({ deviceType: next })
         .where('id = :id', { id: device.id })
-        .andWhere('module_type = :previous', { previous });
+        .andWhere('device_type = :previous', { previous });
 
-      if (next === ModuleType.BOILER && device.boilerId) {
+      if (next === DeviceType.KOTYOL && device.boilerId) {
         qb.andWhere(
           `NOT EXISTS (SELECT 1 FROM devices other
              WHERE other.boiler_id = :boilerId
-               AND other.module_type = 'boiler'
+               AND other.device_type = 'kotyol'
                AND other.id <> :id)`,
           { boilerId: device.boilerId, id: device.id },
         );
@@ -407,19 +216,17 @@ export class DeviceAuthService {
 
       const result = await qb.execute();
       if (!result.affected) {
-        if (next === ModuleType.BOILER && device.boilerId) {
-          this.logger.warn(
-            `Qurilma ${device.deviceId}: qozonxona moduli deb aytdi, lekin ` +
-              'ulangan kotyolda boshqa qozonxona moduli bor — tur o‘zgartirilmadi',
-          );
-        }
+        this.logger.warn(
+          `Qurilma ${device.deviceId}: tur «${next}» yozilmadi — ` +
+            'ulangan kotyolda boshqa kotyol moduli bor yoki tur parallel o‘zgargan',
+        );
         return false;
       }
     } catch (error) {
       this.logger.warn(
-        `Qurilma ${device.deviceId}: modul turini yozib bo‘lmadi — ` +
+        `Qurilma ${device.deviceId}: turini yozib bo‘lmadi — ` +
           (isUniqueViolation(error)
-            ? 'kotyolda boshqa qozonxona moduli bor'
+            ? 'kotyolda boshqa kotyol moduli bor'
             : error instanceof Error
               ? error.message
               : String(error)),
@@ -427,144 +234,140 @@ export class DeviceAuthService {
       return false;
     }
 
-    device.moduleType = next;
-    this.logger.log(
-      `Qurilma ${device.deviceId}: modul turi ${previous} → ${next}`,
-    );
+    device.deviceType = next;
     await this.audit
       .log({
         action: AuditAction.UPDATE,
         entityName: 'Device',
         entityId: device.id,
-        summary: `Modul ${device.deviceId} turi: ${previous} → ${next} (plata signali bo‘yicha)`,
-        before: { moduleType: previous },
-        after: { moduleType: next },
+        summary: `Qurilma ${device.deviceId} turi: ${previous} → ${next} (qurilma o‘zi aytdi)`,
+        before: { deviceType: previous },
+        after: { deviceType: next },
       })
       .catch(() => undefined);
     return true;
   }
 
-  /** `.env` dagi umumiy token (bo'sh bo'lsa — mexanizm o'chiq). */
+  /** Umumiy token yoqilganmi (`.env` da `DEVICE_SHARED_TOKEN`). */
+  sharedTokenEnabled(): boolean {
+    return this.sharedToken().length > 0;
+  }
+
   private sharedToken(): string {
     return this.config.get<string>('telemetry.sharedDeviceToken')?.trim() ?? '';
   }
 
-  /**
-   * ⚠️ Xato YUTILADI: bu tozalash ishi, qurilma yaratilishini
-   * to'xtatmasligi kerak.
-   */
-  private async closePendingQuietly(deviceId: string): Promise<void> {
-    try {
-      await this.pending.update(
-        { deviceId, isDismissed: false },
-        { isDismissed: true },
-      );
-    } catch {
-      // jim — kutish ro'yxati faqat ma'lumot uchun
-    }
+  private isSharedToken(token: string): boolean {
+    const shared = this.sharedToken();
+    if (!shared) return false;
+    return this.keys.matches(token, this.keys.hash(shared));
   }
 
-  /**
-   * TOKENNI TEKSHIRISH — shaxsiy, keyin (ruxsat bo'lsa) umumiy.
-   *
-   * ⚠️⚠️ TARTIB MUHIM: shaxsiy token BIRINCHI tekshiriladi. Texnik
-   * topshiriq (§4) shuni talab qiladi: «qurilmaning token_hash'i
-   * bo'lsa → faqat shaxsiy token». Bizda `api_key_hash` ustuni
-   * `NOT NULL`, ya'ni har bir qurilmada shaxsiy token BOR — demak
-   * umumiy token faqat shaxsiysi mos kelmaganda va faqat ONGLI
-   * ravishda ruxsat berilgan qurilmada ishlaydi.
-   *
-   * ⚠️ Taqqoslash HAR DOIM `DeviceKeyService.matches` orqali: u
-   * vaqt bo'yicha DOIMIY (`timingSafeEqual`). Oddiy `===` javob
-   * vaqtidan tokenni belgima-belgi tanlab olish imkonini berardi.
-   */
   private verifyToken(
     token: string,
     device: Pick<Device, 'apiKeyHash' | 'allowSharedToken'>,
   ): TokenKind | null {
     if (this.keys.matches(token, device.apiKeyHash)) return 'personal';
-
     // ⚠️ Ruxsat berilmagan qurilmada umumiy token UMUMAN tekshirilmaydi.
     if (!device.allowSharedToken) return null;
+    return this.isSharedToken(token) ? 'shared' : null;
+  }
 
-    const shared =
-      this.config.get<string>('telemetry.sharedDeviceToken')?.trim() ?? '';
-    // ⚠️ `.env` da bo'sh bo'lsa — mexanizm butunlay o'chiq.
-    if (!shared) return null;
-
-    return this.keys.matches(token, this.keys.hash(shared)) ? 'shared' : null;
+  private warnType(deviceId: string, message: string): void {
+    const key = `${deviceId}|${message}`;
+    const now = Date.now();
+    const last = this.typeWarnedAt.get(key);
+    if (last !== undefined && now - last < TYPE_WARN_INTERVAL_MS) return;
+    if (this.typeWarnedAt.size > 5_000) this.typeWarnedAt.clear();
+    this.typeWarnedAt.set(key, now);
+    this.logger.warn(`Qurilma ${deviceId}: ${message}`);
   }
 
   /**
-   * RO'YXATDAN O'TMAGAN QURILMANI BELGILASH.
+   * «YANGI QURILMALAR» RO'YXATIGA YOZISH.
    *
-   * ⚠️⚠️ XATO YUTILADI va bu ATAYLAB: bu funksiya 403 javobini
-   * BERMAYDI, u faqat kabinet uchun izoh qoldiradi. Agar yozish
-   * xatosi yuqoriga ko'tarilsa, qurilma 403 o'rniga 500 olardi va
-   * «keyinroq qayta yuboraman» deb tushunardi — natijada notanish
-   * qurilma serverga cheksiz urinib turardi.
+   * ⚠️⚠️ HAR SO'ROVDA YANGI QATOR EMAS — `device_id` UNIQUE, hisoblagich
+   * oshiriladi. Token O'ZI emas, faqat hash'i saqlanadi: ro'yxatga olishda u
+   * qurilmaning shaxsiy kaliti bo'ladi va dalada turgan plata o'z tokenini
+   * o'zgartirmasdan ishlay boshlaydi.
+   *
+   * ⚠️ Bir xil `device_id` bilan BOSHQA token kelsa — `token_conflict`:
+   * kimdir haqiqiy plata identifikatoridan foydalanayotgan bo'lishi mumkin
+   * va bunday so'rov bir bosishda ro'yxatga olinmaydi.
+   *
+   * ⚠️ XATOSI YUTILADI: bu yozuv faqat ma'lumot, qurilma baribir 403 oladi.
    */
   private async notePending(
     deviceId: string,
+    token: string,
     meta: DeviceRequestMeta,
   ): Promise<void> {
     try {
       const now = new Date();
-      const ip = meta.ip?.slice(0, 45) ?? null;
-      const firmware = meta.firmwareVersion ?? null;
-      const hint = meta.institutionHint ?? null;
+      const shared = this.isSharedToken(token);
+      const tokenHash = this.keys.hash(token);
+      const fields: Partial<PendingDevice> = {
+        lastSeenAt: now,
+        lastIpAddress: meta.ip?.slice(0, 45) ?? null,
+        firmwareVersion: meta.firmwareVersion ?? null,
+        tokenKind: shared ? 'shared' : 'personal',
+        tokenHash: shared ? null : tokenHash,
+        tokenPreview: shared ? null : this.keys.preview(token),
+      };
+      // ⚠️ Kelmagan maydon oxirgi ma'lum qiymatni O'CHIRMAYDI.
+      if (meta.institutionHint) fields.institutionHint = meta.institutionHint;
+      if (meta.deviceType) fields.deviceType = meta.deviceType;
+      if (meta.reportedDistrictKey)
+        fields.reportedDistrict = meta.reportedDistrictKey;
+      if (meta.reportedObjectType)
+        fields.reportedObjectType = meta.reportedObjectType;
+      if (meta.reportedInstitution)
+        fields.reportedInstitution = meta.reportedInstitution;
 
       const existing = await this.pending.findOne({
         where: { deviceId },
-        select: { id: true },
+        select: { id: true, tokenHash: true, tokenKind: true },
       });
 
       if (existing) {
+        const conflict =
+          existing.tokenKind !== null &&
+          (existing.tokenKind !== fields.tokenKind ||
+            (fields.tokenKind === 'personal' &&
+              existing.tokenHash !== null &&
+              existing.tokenHash !== tokenHash));
         await this.pending.update(existing.id, {
-          lastSeenAt: now,
-          lastIpAddress: ip,
-          firmwareVersion: firmware,
-          institutionHint: hint,
-          // ⚠️ Yangi qator EMAS, hisoblagich oshiriladi.
+          ...fields,
+          ...(conflict ? { tokenConflict: true } : {}),
           attempts: (): string => '"attempts" + 1',
         });
+        if (conflict) {
+          this.logger.warn(
+            `«Yangi qurilma» ${deviceId}: OLDINGIDAN BOSHQA token bilan keldi — ` +
+              'bir bosishda ro‘yxatga olish o‘chirildi',
+          );
+        }
         return;
       }
 
-      /*
-       * ⚠️⚠️ CHEGARA — JADVALNI HUJUMDAN HIMOYA QILADI. Chegaraga
-       * yetilsa, yangi yozuv qabul qilinmaydi — lekin jurnalga
-       * tushadi, ya'ni holat ko'rinmay qolmaydi.
-       */
       const open = await this.pending.count({ where: { isDismissed: false } });
       if (open >= PENDING_DEVICES_LIMIT) {
         this.logger.warn(
-          `Kutish ro‘yxati to‘ldi (${PENDING_DEVICES_LIMIT}) — ` +
-            `${deviceId} yozilmadi`,
+          `Kutish ro‘yxati to‘ldi (${PENDING_DEVICES_LIMIT}) — ${deviceId} yozilmadi`,
         );
         return;
       }
 
-      await this.pending.insert({
-        deviceId,
-        institutionHint: hint,
-        firmwareVersion: firmware,
-        lastIpAddress: ip,
-        attempts: 1,
-        lastSeenAt: now,
-      });
-
+      await this.pending.insert({ ...fields, deviceId, attempts: 1 });
       this.logger.warn(
-        `YANGI QURILMA so‘rayapti: ${deviceId}` + (hint ? ` (${hint})` : ''),
+        `YANGI QURILMA so‘rayapti: ${deviceId}` +
+          (meta.deviceType ? ` (${meta.deviceType})` : '') +
+          (meta.reportedDistrictKey
+            ? `, tuman: ${meta.reportedDistrictKey}`
+            : ''),
       );
     } catch (error) {
-      /*
-       * ⚠️ Poyga holati: ikki so'rov bir vaqtda kelib, ikkalasi ham
-       * «yozuv yo'q» deb ko'rsa, ikkinchisi unique indeksga uriladi.
-       * Bu xato EMAS — natija aynan kerakli: bitta qator bor.
-       */
       if (isUniqueViolation(error)) return;
-
       this.logger.warn(
         'Kutish ro‘yxatiga yozib bo‘lmadi: ' +
           (error instanceof Error ? error.message : String(error)),

@@ -1,4 +1,4 @@
-import { ModuleType } from '../common/constants/enums';
+import { DeviceType } from '../common/constants/enums';
 
 /**
  * PLATA O'ZI HAQIDA AYTADIGAN MA'LUMOT — modul turi, joylashuv, namlik.
@@ -26,16 +26,16 @@ export const HUMIDITY_MAX = 100;
  * proshivka bilan kelishilgan qiymatlar, qolganlari inson adashishiga
  * zaxira. Noma'lum qiymat turni O'ZGARTIRMAYDI.
  */
-const MODULE_TYPE_ALIASES: Record<string, ModuleType> = {
-  boiler: ModuleType.BOILER,
-  kotyol: ModuleType.BOILER,
-  qozonxona: ModuleType.BOILER,
-  room: ModuleType.ROOM,
-  xona: ModuleType.ROOM,
+const DEVICE_TYPE_ALIASES: Record<string, DeviceType> = {
+  boiler: DeviceType.KOTYOL,
+  kotyol: DeviceType.KOTYOL,
+  qozonxona: DeviceType.KOTYOL,
+  room: DeviceType.XONA,
+  xona: DeviceType.XONA,
 };
 
 const FIELDS = {
-  moduleType: ['module_type', 'moduleType'],
+  deviceType: ['device_type', 'deviceType', 'module_type', 'moduleType'],
   mfy: ['mfy', 'mahalla', 'mfy_name'],
   institution: ['institution_name', 'institutionName', 'muassasa_nomi'],
   objectType: ['object_type', 'objectType', 'obyekt_turi'],
@@ -51,9 +51,9 @@ function pick(raw: Record<string, unknown>, keys: readonly string[]): unknown {
 }
 
 /** `room` / `boiler` (va zaxira nomlar) → tur; boshqa hamma narsa → `null`. */
-export function parseModuleType(raw: unknown): ModuleType | null {
+export function parseDeviceType(raw: unknown): DeviceType | null {
   if (typeof raw !== 'string') return null;
-  return MODULE_TYPE_ALIASES[raw.trim().toLowerCase()] ?? null;
+  return DEVICE_TYPE_ALIASES[raw.trim().toLowerCase()] ?? null;
 }
 
 /**
@@ -96,6 +96,23 @@ export function sanitizeReportedText(
 }
 
 /**
+ * MUASSASA NOMINI SOLISHTIRISH UCHUN NORMALLASHTIRISH.
+ *
+ * ⚠️ Faqat SOLISHTIRISH uchun (ko'rsatish uchun emas): «12-Maktab»,
+ * «12-maktab » va «12‑maktab» (boshqa defis) bitta muassasa. Tutuq belgisining
+ * har xil yozilishi ham olib tashlanadi (`Bo'ston` = `Bo‘ston`).
+ */
+export function normalizeInstitutionName(raw: string): string {
+  return raw
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[‘’ʻʼ'`´]/g, '')
+    .replace(/[‐‑‒–—]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * OBYEKT TURI KALITI — «Kataloglar → Obyekt turlari» dagi mashina kodi.
  * ⚠️ Kichik harfga o'tkaziladi (`School` = `school`); ruxsat etilmagan
  * belgi bo'lsa — `null`: kalit qidiruv va jadvalda ishlatiladi.
@@ -127,7 +144,7 @@ export function parseHumidity(raw: unknown): number | null {
 
 export interface RejectedProfileField {
   field:
-    'module_type' | 'mfy' | 'institution_name' | 'object_type' | 'humidity';
+    'device_type' | 'mfy' | 'institution_name' | 'object_type' | 'humidity';
   value: unknown;
 }
 
@@ -136,7 +153,7 @@ export interface ReportedProfile {
    * Plata AYTGAN tur (sarlavha yoki tana). `null` — aytmagan: eski
    * proshivka yoki xona modulining 1.0.0 versiyasi.
    */
-  declaredType: ModuleType | null;
+  declaredType: DeviceType | null;
   /** `undefined` — maydon kelmagan (eski qiymat SAQLANADI). */
   mfy: string | undefined;
   institution: string | undefined;
@@ -159,17 +176,17 @@ export interface ReportedProfile {
  */
 export function extractReportedProfile(
   raw: Record<string, unknown>,
-  headerModuleType: unknown,
+  headerDeviceType: unknown,
 ): ReportedProfile {
   const rejected: RejectedProfileField[] = [];
 
   const declaredRaw =
-    typeof headerModuleType === 'string' && headerModuleType.trim()
-      ? headerModuleType
-      : pick(raw, FIELDS.moduleType);
-  const declaredType = parseModuleType(declaredRaw);
+    typeof headerDeviceType === 'string' && headerDeviceType.trim()
+      ? headerDeviceType
+      : pick(raw, FIELDS.deviceType);
+  const declaredType = parseDeviceType(declaredRaw);
   if (declaredRaw !== undefined && declaredType === null) {
-    rejected.push({ field: 'module_type', value: declaredRaw });
+    rejected.push({ field: 'device_type', value: declaredRaw });
   }
 
   const text = (
@@ -212,30 +229,66 @@ export function extractReportedProfile(
 }
 
 /**
- * MODUL TURINI ANIQLASH — aytilgani, aytilmasa YUK SHAKLIDAN.
+ * TANADAN TURNI ANIQLASH — `X-Device-Type` sarlavhasi bo'lmaganda.
  *
- * ⚠️⚠️ Xulosa faqat ANIQ shakldan: suv harorati maydoni bor → `boiler`
- * (xona moduli uni hech qachon yubormaydi); suv harorati umuman yo'q, xona
- * harorati bor → `room`. Boshqa holatda `null` — tur O'ZGARMAYDI. Shu
- * tufayli 1.0.0 xona modullari (turini aytmaydi) birinchi signalidayoq
- * `room` bo'ladi va qozonxona proshivkasi ularga taklif qilinmaydi.
+ * Spetsifikatsiya (§2): `room_temperature_c` bor → `xona`, aks holda
+ * `kotyol`. Eski kotyol proshivkasi (v2.0.0) sarlavha yubormaydi va
+ * `room_temperature_c` ni hech qachon yubormaydi; xona moduli v1.0.0 ham
+ * sarlavhasiz, lekin `room_temperature_c` yuboradi.
  *
- * ⚠️⚠️ KOTYOLGA BIRIKTIRILGAN qurilmada xulosa CHIQARILMAYDI — faqat plata
- * o'zi aytgan tur qo'llanadi. Quvur datchiklari uzilib, faqat xona datchigi
- * ishlab qolgan qozonxona platasi «xona moduli» bo'lib qolmasligi kerak:
- * aks holda u qozonxona proshivkasini olmay qolardi va kotyol modulsiz
- * hisoblanardi. Xona moduli esa kotyolga ulanishidan OLDIN signal yuboradi
- * va turi o'shanda aniqlanadi.
+ * ⚠️ `rooms[]` massivi xona moduli EMAS — u kotyol modulining qo'shimcha
+ * xona datchiklari; shuning uchun faqat YAKKA `room_temperature_c` hisobga
+ * olinadi.
  */
-export function resolveModuleType(input: {
-  declared: ModuleType | null;
-  hasBoilerReading: boolean;
-  hasRoomReading: boolean;
-  isBound: boolean;
-}): ModuleType | null {
-  if (input.declared) return input.declared;
-  if (input.isBound) return null;
-  if (input.hasBoilerReading) return ModuleType.BOILER;
-  if (input.hasRoomReading) return ModuleType.ROOM;
-  return null;
+export function inferDeviceType(input: {
+  hasRoomTemperatureField: boolean;
+}): DeviceType {
+  return input.hasRoomTemperatureField ? DeviceType.XONA : DeviceType.KOTYOL;
+}
+
+export interface DeviceTypeDecision {
+  /** Bazaga yoziladigan yangi tur; `null` — o'zgarmaydi. */
+  next: DeviceType | null;
+  /** Jurnalga yoziladigan ogohlantirish; `null` — hammasi joyida. */
+  warning: string | null;
+}
+
+/**
+ * TURNI SAQLASH QARORI.
+ *
+ * ⚠️⚠️ AYTILGAN tur (sarlavha / OTA `type=`) bazaga yoziladi va avvalgisidan
+ * farq qilsa — ogohlantirish. Proshivka o'zi qaysi plata ekanini biladi.
+ *
+ * ⚠️⚠️ TANADAN XULOSA qilingan tur saqlanganini O'ZGARTIRMAYDI — faqat
+ * ogohlantiradi. Sabab: DHT22 datchigi uzilgan eski xona moduli
+ * `room_temperature_c` ni yubormay qoladi va qoida uni «kotyol» deb
+ * hisoblaydi. Shu xulosa yozilsa, keyingi OTA tekshiruvida (eski proshivka
+ * `type=` yubormaydi) xona platasiga KOTYOL `.bin` taklif qilinardi va plata
+ * datchiksiz qolib, faqat qo'lda tiklanardi. Yangi qurilmaning turi esa
+ * ro'yxatga olishda shu xulosadan olinadi (`pending_devices.device_type`).
+ */
+export function decideDeviceType(input: {
+  declared: DeviceType | null;
+  inferred: DeviceType | null;
+  stored: DeviceType;
+}): DeviceTypeDecision {
+  if (input.declared) {
+    if (input.declared === input.stored) return { next: null, warning: null };
+    return {
+      next: input.declared,
+      warning:
+        `qurilma turi o‘zgardi: ${input.stored} → ${input.declared} ` +
+        '(qurilma o‘zi aytdi)',
+    };
+  }
+  if (input.inferred && input.inferred !== input.stored) {
+    return {
+      next: null,
+      warning:
+        `tanadan aniqlangan tur (${input.inferred}) saqlangan turdan ` +
+        `(${input.stored}) farq qiladi — tur O‘ZGARTIRILMADI ` +
+        '(datchik nosozligini tekshiring)',
+    };
+  }
+  return { next: null, warning: null };
 }

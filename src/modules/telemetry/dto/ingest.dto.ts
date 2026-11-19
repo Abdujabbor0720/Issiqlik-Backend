@@ -2,13 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import {
-  IsISO8601,
-  IsNumber,
-  IsOptional,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 import { toNumber, trim } from '../../../common/dto/transforms';
 
 /**
@@ -18,7 +12,7 @@ import { toNumber, trim } from '../../../common/dto/transforms';
  * dalada IKKI XIL proshivka ishlaydi va ularni bir kunda
  * almashtirib bo'lmaydi:
  *
- *   • eski (`modul1`, Xonobod v1.x):
+ *   • eski (`modul1`, birinchi avlod v1.x):
  *       {"deviceId":"modul1","temperature":54.5}
  *       {"institution_id":"maktab-1","device_id":"esp32-…","temperature_c":54.5}
  *   • yangi (v2.0.0, ikki datchik):
@@ -107,23 +101,11 @@ export class IngestDto {
   @IsOptional()
   firmware?: string;
 
-  /**
-   * Qurilma aytgan o'lchov vaqti (UTC, ISO 8601) — oflayn navbatdan.
-   *
-   * ⚠️ Chegaralar (kelajakda ≤5 daqiqa, eskiligi ≤24 soat) SERVISDA
-   * tekshiriladi, DTO'da emas: chegaradan chiqqan vaqt o'lchovni RAD
-   * ETMAYDI, faqat e'tiborsiz qoldiriladi va server vaqti ishlatiladi.
-   * ESP32 da real-time soat yo'q — NTP ishlamasa, vaqt yolg'on
-   * bo'ladi, lekin HARORAT YAROQLI bo'lib qolaveradi.
+  /*
+   * ⚠️ `measured_at` ATAYLAB YO'Q: yangi proshivka uni yubormaydi va o'lchov
+   * vaqti — SERVER vaqti. Eski proshivka yuborsa ham e'tiborsiz qoldiriladi
+   * (normallashtirishda o'qilmaydi), ya'ni buzuq sana 400 ga olib kelmaydi.
    */
-  @ApiPropertyOptional({ example: '2026-11-14T08:15:00Z' })
-  @Transform(trim)
-  @IsISO8601(
-    { strict: false },
-    { message: 'measured_at ISO 8601 bo‘lishi kerak' },
-  )
-  @IsOptional()
-  measuredAt?: string;
 }
 
 /**
@@ -201,7 +183,7 @@ export function normalizePayload(
     /*
      * ⚠️⚠️ YAKKA HARORAT — IKKI XIL ESKI SHAKL BIRLASHTIRILGAN:
      *   • bizning `modul1`: `temperature` / `temp` / `t` / `chiqish`;
-     *   • Xonobod v1.x va v2.0.0 ning yakka rejimi: `temperature_c`.
+     *   • v1.x va v2.x ning yakka rejimi: `temperature_c`.
      * `outTemp` / `out_temp` ham qoldirilgan — ular bizning eski
      * proshivkada ishlatilgan va dalada hali turishi mumkin.
      *
@@ -231,10 +213,6 @@ export function normalizePayload(
     ),
 
     firmware: asText(pick('firmware', 'fw', 'version', 'firmwareVersion')),
-
-    measuredAt: asText(
-      pick('measured_at', 'measuredAt', 'ts', 'timestamp', 'vaqt'),
-    ),
   };
 }
 
@@ -315,18 +293,21 @@ export function extractFirmwareVersion(
 }
 
 /**
- * MODUL TURI SARLAVHASI (`X-Module-Type: room`) — xom ko'rinishda.
+ * QURILMA TURI SARLAVHASI (`X-Device-Type: kotyol|xona`) — xom ko'rinishda.
  *
- * ⚠️ Qozonxona proshivkasida bu sarlavha YO'Q (kontrakt qotirilgan) —
- * `null` qaytadi va tur yukning shaklidan yoki bazadan olinadi. Qiymatni
- * talqin qilish `parseModuleType()` da (`device-profile.helper.ts`).
+ * ⚠️ YANGI kontrakt (kotyol v2.1.0, xona v1.1.0). Eski proshivkada bu
+ * sarlavha YO'Q — `null` qaytadi va tur tanadan aniqlanadi
+ * (`inferDeviceType`). `X-Module-Type` — oraliq sinov proshivkasining
+ * nomi, zaxira sifatida o'qiladi. Talqin — `parseDeviceType()`.
  */
-export function extractModuleTypeHeader(
+export function extractDeviceTypeHeader(
   headers: Record<string, unknown>,
 ): string | null {
-  const value = headers['x-module-type'];
-  if (typeof value === 'string' && value.trim())
-    return value.trim().slice(0, 32);
+  for (const name of ['x-device-type', 'x-module-type']) {
+    const value = headers[name];
+    if (typeof value === 'string' && value.trim())
+      return value.trim().slice(0, 32);
+  }
   return null;
 }
 
@@ -354,7 +335,7 @@ export async function parseDeviceRequest(
   apiKey: string | null;
   raw: Record<string, unknown>;
   firmwareVersion: string | null;
-  moduleTypeHeader: string | null;
+  deviceTypeHeader: string | null;
 }> {
   const raw =
     body && typeof body === 'object' && !Array.isArray(body)
@@ -416,6 +397,6 @@ export async function parseDeviceRequest(
     apiKey: extractApiKey(headers, raw, query),
     raw,
     firmwareVersion: extractFirmwareVersion(headers),
-    moduleTypeHeader: extractModuleTypeHeader(headers),
+    deviceTypeHeader: extractDeviceTypeHeader(headers),
   };
 }

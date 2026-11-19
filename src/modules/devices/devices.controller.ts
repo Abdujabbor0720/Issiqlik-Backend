@@ -21,7 +21,9 @@ import { IdParamDto } from '../../common/dto/id-param.dto';
 import { DevicesService } from './devices.service';
 import { PendingDevicesService } from './pending-devices.service';
 import {
+  ConfirmLocationDto,
   CreateDeviceDto,
+  RegisterPendingDto,
   DeviceQueryDto,
   UpdateDeviceDto,
 } from './dto/device.dto';
@@ -53,35 +55,71 @@ export class DevicesController {
   @Get('pending')
   @RequirePermissions(PERMISSIONS.DEVICES_VIEW)
   @ApiOperation({
-    summary: 'Ro‘yxatdan o‘tmagan qurilmalar («yangi qurilma so‘rayapti»)',
+    summary:
+      '«Yangi qurilmalar» — ro‘yxatda yo‘q, lekin so‘rov yuborayotganlar',
+    description:
+      'device_id, tur, plata aytgan tuman/obyekt turi/muassasa, IP, oxirgi vaqt. ' +
+      'Tuman mas‘uli faqat o‘z tumanini aytganlarini ko‘radi.',
   })
-  listPending() {
-    return this.pending.list();
+  listPending(
+    @CurrentUser() user: AuthUser,
+    @Query('includeDismissed') includeDismissed?: string,
+  ) {
+    return this.pending.list(user, includeDismissed === 'true');
   }
 
-  /**
-   * ⚠️ `DEVICES_UPDATE` ruxsati kerak, `DEVICES_VIEW` emas: rad etish
-   * — bildirishnomani YOPISH, ya'ni holatni o'zgartiruvchi qaror.
-   */
+  @Post('pending/:id/register')
+  @RequirePermissions(PERMISSIONS.DEVICES_CREATE)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Bir bosishda ro‘yxatga olish va joylashuvni tasdiqlash',
+    description:
+      'Maydonlar berilmasa plata aytgan qiymatlar (taklif) olinadi. Qurilma ' +
+      'yuborgan shaxsiy token qabul qilinadi — plata o‘zgarishsiz ishlaydi.',
+  })
+  async registerPending(
+    @Param() params: IdParamDto,
+    @Body() dto: RegisterPendingDto,
+    @CurrentUser() actor: AuthUser,
+  ) {
+    await this.pending.assertVisible(params.id, actor);
+    return this.service.registerPending(params.id, dto, actor);
+  }
+
   @Post('pending/:id/dismiss')
   @RequirePermissions(PERMISSIONS.DEVICES_UPDATE)
   @ApiOperation({ summary: 'So‘rovni rad etish (o‘chirilmaydi, belgilanadi)' })
-  dismissPending(@Param() params: IdParamDto) {
+  async dismissPending(
+    @Param() params: IdParamDto,
+    @CurrentUser() actor: AuthUser,
+  ) {
+    await this.pending.assertVisible(params.id, actor);
     return this.pending.dismiss(params.id);
   }
 
   @Post('pending/:id/restore')
   @RequirePermissions(PERMISSIONS.DEVICES_UPDATE)
   @ApiOperation({ summary: 'Rad etilgan so‘rovni ro‘yxatga qaytarish' })
-  restorePending(@Param() params: IdParamDto) {
+  async restorePending(
+    @Param() params: IdParamDto,
+    @CurrentUser() actor: AuthUser,
+  ) {
+    await this.pending.assertVisible(params.id, actor);
     return this.pending.restore(params.id);
+  }
+
+  @Get('versions')
+  @RequirePermissions(PERMISSIONS.DEVICES_VIEW)
+  @ApiOperation({ summary: 'Filtr uchun: proshivka versiyalari va soni' })
+  versions(@CurrentUser() user: AuthUser) {
+    return this.service.versions(user);
   }
 
   @Get(':id')
   @RequirePermissions(PERMISSIONS.DEVICES_VIEW)
   findOne(@Param() params: IdParamDto, @CurrentUser() user: AuthUser) {
     // ⚠️ Tuman chegarasi bilan — ro'yxatdagi qoida bilan AYNI.
-    return this.service.findOneVisible(params.id, user);
+    return this.service.getRow(params.id, user);
   }
 
   @Post()
@@ -104,6 +142,22 @@ export class DevicesController {
     @CurrentUser() actor: AuthUser,
   ) {
     return this.service.update(params.id, dto, actor);
+  }
+
+  @Post(':id/location/confirm')
+  @RequirePermissions(PERMISSIONS.DEVICES_UPDATE)
+  @ApiOperation({
+    summary: 'Plata aytgan joylashuv taklifini tasdiqlash',
+    description:
+      'Faqat panelda BO‘SH maydonlar to‘ldiriladi. Muassasa katalogdan topiladi ' +
+      'yoki katalogga qo‘shiladi.',
+  })
+  confirmLocation(
+    @Param() params: IdParamDto,
+    @Body() dto: ConfirmLocationDto,
+    @CurrentUser() actor: AuthUser,
+  ) {
+    return this.service.confirmLocation(params.id, dto, actor);
   }
 
   @Post(':id/rotate-key')

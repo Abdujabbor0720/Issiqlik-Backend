@@ -65,29 +65,27 @@ export function extractDistrictRef(raw: Record<string, unknown>): unknown {
 
 export interface DistrictRecord {
   id: string;
+  /** Proshivka kaliti (`andijon-sh`) — `districts.key`. */
+  key: string;
   code: string;
   soato: string | null;
   name: string;
+  /** Xaritadagi qisqa yorliq (`Asaka`). Sof funksiyalar uchun ixtiyoriy. */
+  shortName?: string;
 }
 
 /**
- * XONA MODULI PROSHIVKASINING TUMAN KALITLARI → tizim kodi.
+ * ESKI PROSHIVKALAR YUBORGAN TUMAN KALITLARI → kanonik kalit (`districts.key`).
  *
- * ⚠️⚠️ ANIQ RO'YXAT, TAXMIN EMAS. Proshivka menyusi tumanni o'z kaliti
- * bilan yuboradi (`andijon-sh`, `boston`). 13 tasi tizim kodi bilan AYNI,
- * faqat shu uchtasi farq qiladi. Umumiy «qisqa nom» qoidasi KIRITILMAYDI
- * (yuqoridagi izoh: «Andijon» ikki ma'noli) — faqat kelishilgan kalitlar.
- *
- * ⚠️ Solishtirish XOM qiymat bo'yicha (kichik harf, tutuq belgisi OLIB
- * TASHLANMAYDI): «Bo'ston» deb qo'lda yozilgan qisqa nom avvalgidek rad
- * etiladi, proshivka yuboradigan `boston` esa qabul qilinadi.
+ * ⚠️⚠️ ANIQ RO'YXAT, TAXMIN EMAS. Yangi proshivka (kotyol v2.1.0, xona v1.1.0)
+ * kanonik kalitni yuboradi (`andijon-sh`, `boz`) va u `districts.key` bilan
+ * to'g'ridan-to'g'ri mos keladi. Xona modulining 1.0.0 versiyasi Bo'ston
+ * tumanini `boston` deb yuborgan — faqat shu taxallus qoldirilgan.
  *
  * ⚠️ `Map`, oddiy obyekt EMAS: `{}` da `"constructor"` kaliti prototipdan
  * topilib, so'rov yiqilardi.
  */
-export const FIRMWARE_DISTRICT_KEYS: ReadonlyMap<string, string> = new Map([
-  ['andijon-sh', 'andijon_sh'],
-  ['xonobod-sh', 'xonobod_sh'],
+export const LEGACY_DISTRICT_KEYS: ReadonlyMap<string, string> = new Map([
   ['boston', 'boz'],
 ]);
 
@@ -105,12 +103,16 @@ export function matchDistrict(
   const ref = normalizeDistrictRef(raw);
   if (!ref) return null;
 
+  /*
+   * ⚠️ 1-BOSQICH — PROSHIVKA KALITI (asosiy shakl). Solishtirish XOM qiymat
+   * bo'yicha (kichik harf, tutuq belgisi OLIB TASHLANMAYDI): `boz` qabul
+   * qilinadi, qo'lda yozilgan «Bo'z» esa keyingi bosqichlarga o'tadi.
+   */
   if (typeof raw === 'string') {
-    const code = FIRMWARE_DISTRICT_KEYS.get(raw.trim().toLowerCase());
-    if (code) {
-      const found = districts.filter((item) => item.code === code);
-      return found.length === 1 ? found[0] : null;
-    }
+    const lowered = raw.trim().toLowerCase();
+    const key = LEGACY_DISTRICT_KEYS.get(lowered) ?? lowered;
+    const found = districts.filter((item) => item.key === key);
+    if (found.length === 1) return found[0];
   }
 
   const steps: Array<(item: DistrictRecord) => string | null> = [
@@ -125,4 +127,42 @@ export function matchDistrict(
     if (found.length > 1) return null;
   }
   return null;
+}
+
+/**
+ * TUMAN NOMINI KALITGA MOSLASH — MFY fayli («Asaka tumani», «Andijon sh.»).
+ *
+ * ⚠️ `matchDistrict` dan FARQI: bu yerda inson yozgan nom keladi va
+ * qo'shimchalar har xil («tumani», «t.», «shahri», «sh.»). Qo'shimcha olib
+ * tashlanadi, lekin TURI saqlanadi: «Andijon shahri» → `andijon-sh`,
+ * «Andijon tumani» → `andijon` (ikkalasini adashtirish — eng xavfli xato).
+ * Qo'shimchasiz «Andijon» — NOANIQ, `null`.
+ *
+ * ⚠️ Eski nom ham qabul qilinadi: «Bo'z tumani» → `boz` (Bo'ston).
+ */
+export function matchDistrictName(
+  raw: unknown,
+  districts: Array<DistrictRecord & { kind?: string }>,
+): DistrictRecord | null {
+  const direct = matchDistrict(raw, districts);
+  if (direct) return direct;
+
+  const ref = normalizeDistrictRef(raw);
+  if (!ref) return null;
+
+  const CITY = /\s+(shahri|shahar|sh\.?)$/;
+  const RAYON = /\s+(tumani|tuman|t\.?)$/;
+  const kind = CITY.test(ref) ? 'city' : RAYON.test(ref) ? 'district' : null;
+  if (!kind) return null;
+  const base = ref.replace(CITY, '').replace(RAYON, '').trim();
+  const aliases: Record<string, string> = { boz: 'boston' };
+  const wanted = aliases[base] ?? base;
+
+  const found = districts.filter((item) => {
+    const itemRef = normalizeDistrictRef(item.name) ?? '';
+    const itemKind = CITY.test(itemRef) ? 'city' : 'district';
+    const itemBase = itemRef.replace(CITY, '').replace(RAYON, '').trim();
+    return itemKind === kind && itemBase === wanted;
+  });
+  return found.length === 1 ? found[0] : null;
 }

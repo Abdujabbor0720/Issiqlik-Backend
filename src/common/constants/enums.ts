@@ -70,7 +70,7 @@ export enum ProbeKind {
   /**
    * Bitta harorat keldi, lekin qaysi quvurligi AYTILMAGAN.
    *
-   * ⚠️ Eski proshivkalar (`modul1` va Xonobodning v1.x) `probe`
+   * ⚠️ Eski proshivkalar (`modul1` va birinchi avlod v1.x) `probe`
    * maydonini yubormaydi. Ular chiqish haroratini yuboradi, shuning
    * uchun qiymat chiqish sifatida qabul qilinadi — lekin bu
    * TAXMIN ekani shu holat bilan belgilanib turadi.
@@ -164,27 +164,31 @@ export enum RolloutStatus {
 /**
  * ESP32 MODULI TURI — qaysi apparat va qaysi proshivka oilasi.
  *
- * ⚠️⚠️ OTA XAVFSIZLIGINING ASOSI. Ikki oila bir xil OTA kontraktidan
- * foydalanadi; qozonxona proshivkasi xona moduliga (yoki aksincha)
- * yozilsa, plata noto'g'ri datchikni o'qib, «ishlayapti» deb tasdiqlab
- * yuborardi — xato faqat dalada, qo'lda topilardi. Shuning uchun
- * relizning turi `.bin` ICHIDAGI belgidan, qurilmaniki esa uning O'Z
- * signalidan olinadi va OTA faqat bir xil tur orasida ishlaydi.
+ * ⚠️⚠️ QIYMATLAR QURILMA KONTRAKTIDA QOTIRILGAN: `X-Device-Type: kotyol|xona`
+ * sarlavhasi, OTA'dagi `type=kotyol|xona` parametri va `.bin` ichidagi
+ * `ANDIJON_FW_MODULE=kotyol;` belgisi aynan shu so'zlar bilan keladi.
+ * Bazada (`devices.device_type`, `firmware_releases.device_type`) ham
+ * shu qiymatlar turadi — tarjima jadvali yo'q, demak adashish ham yo'q.
  *
- *   • `boiler` — qozonxona moduli (DS18B20, suv harorati). Eski
- *     proshivkalar turini aytmaydi — ular shu tur deb olinadi.
- *   • `room`   — xona harorati moduli (DHT22, faqat havo).
+ * ⚠️⚠️ OTA XAVFSIZLIGINING ASOSI. Kotyol `.bin` xona platasiga (yoki
+ * aksincha) yozilsa, plata datchiksiz qoladi va uni faqat qo'lda, USB
+ * bilan tiklash mumkin. Shuning uchun relizning turi `.bin` ICHIDAGI
+ * belgidan, qurilmaniki esa uning O'Z signalidan olinadi va OTA faqat
+ * bir xil tur orasida ishlaydi.
+ *
+ *   • `kotyol` — qozonxona moduli (2× DS18B20, suv harorati, v2.x).
+ *   • `xona`   — xona harorati moduli (havo harorati, v1.x).
  */
-export enum ModuleType {
-  BOILER = 'boiler',
-  ROOM = 'room',
+export enum DeviceType {
+  KOTYOL = 'kotyol',
+  XONA = 'xona',
 }
 
 /**
  * TARQATISH MAQSADI.
  *
  * ⚠️ `DISTRICTS` — viloyat miqyosi uchun eng muhim kesim. Texnik
- * topshiriq Xonobod uchun «maktab/bog'cha» kesimini taklif qilgan;
+ * topshiriq dastlab bitta tuman uchun «maktab/bog'cha» kesimini taklif qilgan;
  * 16 tumanli viloyatda esa yangi proshivkani avval BITTA TUMANDA
  * sinab ko'rish — eng tabiiy va eng xavfsiz bosqich.
  */

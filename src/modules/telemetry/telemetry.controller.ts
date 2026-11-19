@@ -23,12 +23,16 @@ import { RawResponse } from '../../common/decorators/raw-response.decorator';
 import { IdParamDto } from '../../common/dto/id-param.dto';
 import { parseDeviceRequest } from './dto/ingest.dto';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto';
+import { DevicesService } from '../devices/devices.service';
 import { TelemetryService } from './telemetry.service';
 
 @ApiTags('Telemetriya')
 @Controller('telemetry')
 export class TelemetryController {
-  constructor(private readonly service: TelemetryService) {}
+  constructor(
+    private readonly service: TelemetryService,
+    private readonly devices: DevicesService,
+  ) {}
 
   /**
    * ⚠️ Yangi proshivkalar uchun manzil. `IngestController` dagi eski
@@ -56,7 +60,7 @@ export class TelemetryController {
     return this.service.ingest(parsed.dto, parsed.apiKey, parsed.raw, {
       ip: req.ip ?? req.socket.remoteAddress ?? null,
       firmwareVersion: parsed.firmwareVersion,
-      moduleTypeHeader: parsed.moduleTypeHeader,
+      deviceTypeHeader: parsed.deviceTypeHeader,
     });
   }
 
@@ -72,7 +76,33 @@ export class TelemetryController {
   @Get('boilers/:id/recent')
   @RequirePermissions(PERMISSIONS.TELEMETRY_VIEW)
   @ApiOperation({ summary: 'Kotyolning oxirgi o‘lchovlari' })
-  recent(@Param() params: IdParamDto, @Query('limit') limit?: string) {
-    return this.service.recent(params.id, Number(limit ?? 100) || 100);
+  recent(
+    @Param() params: IdParamDto,
+    @CurrentUser() user: AuthUser,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.recent(params.id, Number(limit ?? 100) || 100, user);
+  }
+
+  /**
+   * QURILMA GRAFIGI: kotyol moduli — kirish/chiqish, xona moduli — xona harorati.
+   * ⚠️ Tuman chegarasi `findOneVisible` da (begona tuman qurilmasi — 404).
+   */
+  @ApiBearerAuth('bearer')
+  @Get('devices/:id/series')
+  @RequirePermissions(PERMISSIONS.TELEMETRY_VIEW)
+  @ApiOperation({
+    summary: 'Qurilma grafigi (kirish/chiqish yoki xona harorati)',
+  })
+  async deviceSeries(
+    @Param() params: IdParamDto,
+    @Query() query: TelemetryQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    const device = await this.devices.findOneVisible(params.id, user);
+    return {
+      deviceType: device.deviceType,
+      points: await this.service.deviceSeries(device.id, query),
+    };
   }
 }

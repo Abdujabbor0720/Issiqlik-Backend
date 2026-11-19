@@ -20,7 +20,7 @@ import {
 } from '../../../common/dto/transforms';
 
 export class CreateUserDto {
-  @ApiProperty({ example: 'operator.jalaquduq' })
+  @ApiProperty({ example: 'masul.asaka' })
   @Transform(trim)
   @IsString()
   @IsNotEmpty({ message: 'Login kiritilmagan' })

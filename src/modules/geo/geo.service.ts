@@ -1,10 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BoilerStatus, UserRole } from '../../common/constants/enums';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { Boiler } from '../../database/entities/boiler.entity';
 import { District } from '../../database/entities/district.entity';
+import { DistrictDirectoryService } from './district-directory.service';
 import { Region } from '../../database/entities/region.entity';
 import { applyDistrictScope } from '../../helpers/scope.helper';
 import { SettingsService } from '../settings/settings.service';
@@ -34,6 +40,7 @@ export class GeoService {
     private readonly districts: Repository<District>,
     @InjectRepository(Boiler) private readonly boilers: Repository<Boiler>,
     private readonly settings: SettingsService,
+    private readonly directory: DistrictDirectoryService,
   ) {}
 
   async regionList(): Promise<Region[]> {
@@ -44,12 +51,13 @@ export class GeoService {
   async districtList(
     user?: AuthUser,
   ): Promise<
-    Array<Pick<District, 'id' | 'code' | 'name' | 'shortName' | 'kind'>>
+    Array<Pick<District, 'id' | 'key' | 'code' | 'name' | 'shortName' | 'kind'>>
   > {
     const qb = this.districts
       .createQueryBuilder('district')
       .select([
         'district.id AS id',
+        'district.key AS key',
         'district.code AS code',
         'district.name AS name',
         'district.short_name AS "shortName"',
@@ -286,6 +294,7 @@ export class GeoService {
 
     return {
       districtId: district.id,
+      key: district.key,
       code: district.code,
       name: district.name,
       shortName: district.shortName,
@@ -338,6 +347,61 @@ export class GeoService {
     }
     if (counts.medium / total >= 0.35) return BoilerStatus.MEDIUM;
     return BoilerStatus.ACTIVE;
+  }
+
+  /**
+   * YANGI TUMAN QO'SHISH (ma'muriy islohot) — faqat bosh administrator.
+   *
+   * ⚠️⚠️ KALIT PROSHIVKADA QOTIRILGAN: qurilma sozlash sahifasida faqat
+   * proshivkadagi kalitlar bor. Yangi tuman qo'shilsa, proshivka menyusiga
+   * ham AYNI kalit qo'shilishi kerak — aks holda qurilma uni yubora olmaydi
+   * (panelda esa qo'lda tanlanadi). Kalit keyin O'ZGARTIRILMAYDI.
+   *
+   * ⚠️ Geometriyasiz yaratiladi: xaritada markaz nuqtasi bilan ko'rinadi,
+   * chegara keyin `andijon-districts.geojson` orqali qo'shiladi.
+   */
+  async createDistrict(input: {
+    key: string;
+    name: string;
+    shortName?: string;
+    kind: 'city' | 'district';
+    soato?: string;
+    centerLat: number;
+    centerLng: number;
+  }): Promise<District> {
+    const region = await this.regions.findOne({
+      where: {},
+      order: { createdAt: 'ASC' },
+    });
+    if (!region) throw new BadRequestException('Viloyat yozuvi topilmadi');
+    const clash = await this.districts.findOne({
+      where: [{ key: input.key }, { name: input.name }],
+      select: { id: true, key: true, name: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        clash.key === input.key
+          ? `«${input.key}» kalitli tuman allaqachon bor`
+          : `«${input.name}» nomli tuman allaqachon bor`,
+      );
+    }
+    const saved = await this.districts.save(
+      this.districts.create({
+        key: input.key,
+        code: input.key.replace(/-/g, '_'),
+        name: input.name,
+        shortName:
+          input.shortName ?? input.name.replace(/\s+(tumani|shahri)$/i, ''),
+        kind: input.kind,
+        soato: input.soato ?? null,
+        regionId: region.id,
+        centerLat: input.centerLat,
+        centerLng: input.centerLng,
+        geometry: null,
+      }),
+    );
+    this.directory.invalidate();
+    return saved;
   }
 }
 

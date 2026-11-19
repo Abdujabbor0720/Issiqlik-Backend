@@ -1,6 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import {
-  ModuleType,
+  DeviceType,
   OtaEventStatus,
   RolloutStatus,
   RolloutTargetType,
@@ -19,31 +19,13 @@ import { User } from './user.entity';
 export const OTA_PARTITION_MAX_BYTES = 1_966_080;
 
 /**
- * `.bin` ICHIDAGI VERSIYA BELGISI.
+ * `.bin` ICHIDAGI BELGILAR — `ANDIJON_FW_VERSION=x.y.z;` va
+ * `ANDIJON_FW_MODULE=kotyol|xona;` (kotyol v2.1.0, xona v1.1.0).
  *
- * ⚠️⚠️ Bu satr PROSHIVKADA QOTIRILGAN (`ota.cpp:30`):
- *   const char FW_VERSION_MARK[] = "XONOBOD_FW_VERSION=" FW_VERSION ";";
- * Server yuklangan faylning versiyasini AYNAN shu belgidan o'qiydi.
- * Nomi o'zgartirilsa, mavjud `.bin` fayllar tanilmay qoladi va
- * proshivkani ham qayta yig'ish kerak bo'ladi — shuning uchun
- * loyiha nomi «Issiqlik» bo'lsa ham, belgi O'ZGARMAYDI.
+ * ⚠️ O'qish va baholash qoidasi BITTA joyda: `helpers/firmware-marker.helper.ts`
+ * (umumiy ifoda `([A-Z]+)_FW_VERSION=(\d+\.\d+\.\d+);`, `ANDIJON` ustun;
+ * eski binarlardagi boshqa prefiksli belgilar ham o'qiladi).
  */
-export const FW_VERSION_MARKER = 'XONOBOD_FW_VERSION=';
-
-/**
- * XONA MODULI PROSHIVKASINING BELGISI (DHT22, 1.x).
- *
- * ⚠️⚠️ ALOHIDA BELGI — relizning TURI faylning O'ZIDAN aniqlanadi. Tur
- * administrator tanlaydigan maydon bo'lsa, bitta adashgan bosish qozonxona
- * proshivkasini xona moduliga (yoki aksincha) yo'llab yuborardi.
- */
-export const ROOM_FW_VERSION_MARKER = 'XONA_FW_VERSION=';
-
-/** Belgi → modul turi. Tartib muhim emas: ikkalasi birga bo'lsa RAD etiladi. */
-export const FW_MARKERS: ReadonlyArray<{ marker: string; type: ModuleType }> = [
-  { marker: FW_VERSION_MARKER, type: ModuleType.BOILER },
-  { marker: ROOM_FW_VERSION_MARKER, type: ModuleType.ROOM },
-];
 
 /**
  * YUKLANGAN PROSHIVKA RELIZI.
@@ -60,7 +42,7 @@ export const FW_MARKERS: ReadonlyArray<{ marker: string; type: ModuleType }> = [
  * tekshirilgandan keyin beriladi.
  */
 @Entity('firmware_releases')
-@Index('UQ_firmware_releases_type_version', ['moduleType', 'version'], {
+@Index('UQ_firmware_releases_type_version', ['deviceType', 'version'], {
   unique: true,
 })
 @Index('UQ_firmware_releases_sha256', ['sha256'], { unique: true })
@@ -79,19 +61,41 @@ export class FirmwareRelease extends BaseEntity {
 
   /**
    * Qaysi modul turi uchun — `.bin` ICHIDAGI belgidan
-   * (`XONOBOD_FW_VERSION=` → `boiler`, `XONA_FW_VERSION=` → `room`).
+   * (`ANDIJON_FW_MODULE=kotyol;` / `ANDIJON_FW_MODULE=xona;`; belgisiz eski
+   * faylda — yuklovchi tanlagan tur, `typeSource = 'manual'`).
    *
    * ⚠️ Versiya HAR TUR ichida yagona: xona 1.x va qozonxona 2.x mustaqil.
    */
   @Column({
     type: 'varchar',
     length: 16,
-    name: 'module_type',
-    default: ModuleType.BOILER,
+    name: 'device_type',
+    default: DeviceType.KOTYOL,
   })
-  moduleType!: ModuleType;
+  deviceType!: DeviceType;
 
   /** Diskdagi to'liq yo'l (`FIRMWARE_DIR` ichida). */
+  /**
+   * Tur QAYERDAN olingan: `marker` — `.bin` ichidagi `ANDIJON_FW_MODULE=`
+   * belgisidan; `manual` — belgisiz eski fayl, turni yuklovchi tanlagan.
+   */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    name: 'type_source',
+    default: 'marker',
+  })
+  typeSource!: 'marker' | 'manual';
+
+  /** Versiya belgisining prefiksi: `ANDIJON`, eski fayllarda boshqa prefiks. */
+  @Column({
+    type: 'varchar',
+    length: 32,
+    name: 'marker_prefix',
+    nullable: true,
+  })
+  markerPrefix!: string | null;
+
   @Column({ type: 'varchar', length: 500, name: 'file_path' })
   filePath!: string;
 
@@ -148,7 +152,7 @@ export class FirmwareRelease extends BaseEntity {
  * o'rnatib cheksiz halqaga tushardi.
  */
 @Entity('firmware_rollouts')
-@Index('UQ_firmware_rollouts_one_active', ['moduleType'], {
+@Index('UQ_firmware_rollouts_one_active', ['deviceType'], {
   unique: true,
   where: `"status" = 'active'`,
 })
@@ -165,10 +169,10 @@ export class FirmwareRollout extends BaseEntity {
   @Column({
     type: 'varchar',
     length: 16,
-    name: 'module_type',
-    default: ModuleType.BOILER,
+    name: 'device_type',
+    default: DeviceType.KOTYOL,
   })
-  moduleType!: ModuleType;
+  deviceType!: DeviceType;
 
   @ManyToOne(() => FirmwareRelease, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'release_id' })

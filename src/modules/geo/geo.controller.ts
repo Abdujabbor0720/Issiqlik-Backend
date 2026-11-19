@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import {
@@ -7,7 +7,7 @@ import {
 } from '../../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { IdParamDto } from '../../common/dto/id-param.dto';
-import { MapQueryDto } from './dto/geo.dto';
+import { CreateDistrictDto, MapQueryDto } from './dto/geo.dto';
 import { GeoService } from './geo.service';
 
 @ApiTags('Hududlar va xarita')
@@ -26,6 +26,19 @@ export class GeoController {
   @ApiOperation({ summary: 'Tumanlar (filtr uchun, geometriyasiz)' })
   districts(@CurrentUser() user: AuthUser) {
     return this.service.districtList(user);
+  }
+
+  /**
+   * YANGI TUMAN — faqat `settings.update` (bosh administrator).
+   * ⚠️ Kalit proshivka menyusidagi bilan AYNI bo'lishi shart.
+   */
+  @Post('districts')
+  @RequirePermissions(PERMISSIONS.SETTINGS_UPDATE)
+  @ApiOperation({
+    summary: 'Yangi tuman qo‘shish (kalit proshivka bilan bir xil)',
+  })
+  createDistrict(@Body() dto: CreateDistrictDto) {
+    return this.service.createDistrict(dto);
   }
 
   @Get('map')

@@ -11,9 +11,10 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import {
-  ModuleType,
+  DeviceType,
   RolloutStatus,
   RolloutTargetType,
 } from '../../../common/constants/enums';
@@ -25,7 +26,7 @@ export class UploadFirmwareDto {
    * Administrator kiritgan versiya — IXTIYORIY.
    *
    * ⚠️⚠️ Bu qiymat versiyani BELGILAMAYDI: versiya `.bin` ichidagi
-   * `XONOBOD_FW_VERSION=x.y.z;` belgisidan o'qiladi. Bu maydon faqat
+   * `ANDIJON_FW_VERSION=x.y.z;` belgisidan o'qiladi. Bu maydon faqat
    * TEKSHIRUV uchun: kiritilgani fayl ichidagisiga mos kelmasa,
    * yuklash RAD etiladi (§9.2). Ya'ni u administratorning «men nima
    * yuklayotganimni bilaman» degan tasdig'i.
@@ -48,10 +49,10 @@ export class UploadFirmwareDto {
    * Administrator TANLAGAN modul turi — fayl ichidagi belgi bilan
    * SOLISHTIRILADI (versiya bilan AYNI qoida). Mos kelmasa rad etiladi.
    */
-  @ApiPropertyOptional({ enum: ModuleType })
-  @IsEnum(ModuleType, { message: 'Modul turi: boiler yoki room' })
+  @ApiPropertyOptional({ enum: DeviceType })
+  @IsEnum(DeviceType, { message: 'Modul turi: kotyol yoki xona' })
   @IsOptional()
-  moduleType?: ModuleType;
+  deviceType?: DeviceType;
 }
 
 export class CreateRolloutDto {
@@ -118,4 +119,17 @@ export class UpdateRolloutStatusDto {
   })
   @IsEnum(RolloutStatus)
   status!: RolloutStatus;
+}
+
+export class UpdateRolloutLimitDto {
+  @ApiProperty({
+    nullable: true,
+    example: 10,
+    description: 'Bir vaqtda nechta qurilma; `null` — cheklovsiz',
+  })
+  @ValidateIf((dto: UpdateRolloutLimitDto) => dto.maxDevices !== null)
+  @IsInt()
+  @Min(1)
+  @Max(5000)
+  maxDevices!: number | null;
 }

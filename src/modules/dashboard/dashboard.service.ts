@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, type SelectQueryBuilder } from 'typeorm';
 import {
   AlertState,
   BoilerStatus,
@@ -23,6 +23,26 @@ import type {
   TrendPoint,
   TrendQueryDto,
 } from './dto/dashboard.dto';
+
+/**
+ * OBYEKT TURI FILTRI — kotyolning muassasasi orqali.
+ * ⚠️ Har kotyol so'roviga BIR XIL shaklda qo'shiladi: kartalar, shkala,
+ * tumanlar kesimi va trend bitta filtr bilan bir xil raqamlarni bersin.
+ */
+function applyObjectTypeFilter<T extends object>(
+  qb: SelectQueryBuilder<T>,
+  query: DashboardQueryDto,
+  boilerAlias: string,
+): void {
+  if (!query.objectTypeIds?.length) return;
+  qb.andWhere(
+    `${boilerAlias}.organization_id IN (SELECT o.id FROM organizations o WHERE o.object_type_id IN (:...objectTypeIds))`,
+    { objectTypeIds: query.objectTypeIds },
+  );
+}
+
+/** Qurilma onlayn — oxirgi telemetriya 5 daqiqadan yangi («Qurilmalar» bilan AYNI). */
+const DEVICE_ONLINE_WINDOW_MS = 5 * 60_000;
 
 @Injectable()
 export class DashboardService {
@@ -53,9 +73,6 @@ export class DashboardService {
     user?: AuthUser,
   ): Promise<DashboardSummary> {
     const settings = await this.settings.get();
-    const offlineBefore = new Date(
-      Date.now() - settings.offlineAfterMinutes * 60_000,
-    );
 
     const qb = this.boilers
       .createQueryBuilder('boiler')
@@ -84,7 +101,7 @@ export class DashboardService {
       )
       .addSelect(
         // ⚠️ Faqat QOZONXONA moduli hisoblanadi — xona moduli kotyol haroratini bermaydi.
-        "COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.module_type = 'boiler'))",
+        "COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.device_type = 'kotyol'))",
         'withoutDevice',
       )
       .where('boiler.is_archived = false');
@@ -95,6 +112,7 @@ export class DashboardService {
         districtIds: query.districtIds,
       });
     }
+    applyObjectTypeFilter(qb, query, 'boiler');
 
     const row = await qb.getRawOne<Record<string, string | null>>();
 
@@ -108,10 +126,11 @@ export class DashboardService {
     const [openAlerts, devicesTotal, devicesOnline, readingsLast24h] =
       await Promise.all([
         this.countOpenAlerts(query, user),
-        this.devices.count(),
-        this.devices
-          .createQueryBuilder('device')
-          .where('device.last_seen_at >= :offlineBefore', { offlineBefore })
+        this.deviceQuery(query, user).getCount(),
+        this.deviceQuery(query, user)
+          .andWhere('device.last_seen_at >= :onlineSince', {
+            onlineSince: new Date(Date.now() - DEVICE_ONLINE_WINDOW_MS),
+          })
           .getCount(),
         this.readings
           .createQueryBuilder('reading')
@@ -208,7 +227,7 @@ export class DashboardService {
       )
       .addSelect('boiler.last_reading_at', 'lastReadingAt')
       .addSelect(
-        "EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.module_type = 'boiler')",
+        "EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.device_type = 'kotyol')",
         'hasDevice',
       )
       .where('boiler.is_archived = false');
@@ -219,6 +238,7 @@ export class DashboardService {
         districtIds: query.districtIds,
       });
     }
+    applyObjectTypeFilter(qb, query, 'boiler');
 
     const rows = await qb.getRawMany<Record<string, unknown>>();
     const num = (value: unknown): number | null =>
@@ -273,14 +293,30 @@ export class DashboardService {
     query: DashboardQueryDto,
     user?: AuthUser,
   ): Promise<DistrictRow[]> {
+    const settings = await this.settings.get();
+    const typed = Boolean(query.objectTypeIds?.length);
+    const objectTypeSql = (alias: string): string =>
+      typed
+        ? `AND ${alias}.organization_id IN (SELECT o.id FROM organizations o WHERE o.object_type_id IN (:...objectTypeIds))`
+        : '';
+    const deviceObjectTypeSql = typed
+      ? `AND COALESCE(db.organization_id, d.organization_id) IN (SELECT o.id FROM organizations o WHERE o.object_type_id IN (:...objectTypeIds))`
+      : '';
     const qb = this.districts
       .createQueryBuilder('district')
       .leftJoin(
         'boilers',
         'boiler',
-        'boiler.district_id = district.id AND boiler.is_archived = false',
+        'boiler.district_id = district.id AND boiler.is_archived = false' +
+          (query.objectTypeIds?.length
+            ? ' AND boiler.organization_id IN (SELECT o.id FROM organizations o WHERE o.object_type_id IN (:...objectTypeIds))'
+            : ''),
+        query.objectTypeIds?.length
+          ? { objectTypeIds: query.objectTypeIds }
+          : {},
       )
       .select('district.id', 'districtId')
+      .addSelect('district.key', 'districtKey')
       .addSelect('district.name', 'name')
       .addSelect('district.short_name', 'shortName')
       .addSelect('COUNT(boiler.id)', 'total')
@@ -302,7 +338,42 @@ export class DashboardService {
         'offline',
       )
       .addSelect('AVG(boiler.last_temperature)', 'avgTemperature')
+      /*
+       * ⚠️ «Me'yordan past» — o'lchovi BOR va chiqish harorati
+       * sozlamadagi me'yordan past kotyollar. O'lchovi yo'q kotyol bu
+       * yerga KIRMAYDI: u «aloqa yo'q» ustunida (ikki marta sanalmasin).
+       */
+      .addSelect(
+        `COUNT(boiler.id) FILTER (WHERE boiler.last_reading_at IS NOT NULL
+           AND COALESCE(boiler.last_outlet_temperature, boiler.last_temperature) < :norm)`,
+        'belowNorm',
+      )
+      .addSelect(
+        `(SELECT COUNT(*) FROM alerts a JOIN boilers ab ON ab.id = a.boiler_id
+           WHERE a.state = 'open' AND ab.district_id = district.id
+           ${objectTypeSql('ab')})`,
+        'openAlerts',
+      )
+      .addSelect(
+        `(SELECT COUNT(*) FROM devices d LEFT JOIN boilers db ON db.id = d.boiler_id
+           WHERE d.is_active = true AND COALESCE(db.district_id, d.district_id) = district.id
+           ${deviceObjectTypeSql})`,
+        'devicesTotal',
+      )
+      .addSelect(
+        `(SELECT COUNT(*) FROM devices d LEFT JOIN boilers db ON db.id = d.boiler_id
+           WHERE d.is_active = true AND COALESCE(db.district_id, d.district_id) = district.id
+             AND d.last_seen_at >= :onlineSince
+           ${deviceObjectTypeSql})`,
+        'devicesOnline',
+      )
+      .setParameter('norm', settings.normTemperature)
+      .setParameter(
+        'onlineSince',
+        new Date(Date.now() - DEVICE_ONLINE_WINDOW_MS),
+      )
       .groupBy('district.id')
+      .addGroupBy('district.key')
       .addGroupBy('district.name')
       .addGroupBy('district.short_name')
       .orderBy('district.name', 'ASC');
@@ -320,10 +391,18 @@ export class DashboardService {
       const total = Number(raw.total ?? 0);
       const active = Number(raw.active ?? 0);
       const medium = Number(raw.medium ?? 0);
+      const devicesTotal = Number(raw.devicesTotal ?? 0);
+      const devicesOnline = Number(raw.devicesOnline ?? 0);
       return {
         districtId: raw.districtId,
+        districtKey: raw.districtKey,
         name: raw.name,
         shortName: raw.shortName,
+        devicesTotal,
+        devicesOnline,
+        devicesOffline: devicesTotal - devicesOnline,
+        belowNorm: Number(raw.belowNorm ?? 0),
+        openAlerts: Number(raw.openAlerts ?? 0),
         total,
         boilerUnits: Number(raw.boilerUnits ?? 0),
         active,
@@ -386,7 +465,9 @@ export class DashboardService {
       .orderBy('1', 'ASC');
 
     const needsJoin =
-      Boolean(query.districtIds?.length) || user?.role === UserRole.OPERATOR;
+      Boolean(query.districtIds?.length) ||
+      Boolean(query.objectTypeIds?.length) ||
+      user?.role === UserRole.OPERATOR;
     if (needsJoin) {
       qb.innerJoin('boilers', 'b', 'b.id = reading.boiler_id');
       if (query.districtIds?.length) {
@@ -394,6 +475,7 @@ export class DashboardService {
           districtIds: query.districtIds,
         });
       }
+      applyObjectTypeFilter(qb, query, 'b');
       applyDistrictScope(qb, user, 'b.district_id');
     }
 
@@ -467,6 +549,7 @@ export class DashboardService {
         districtIds: query.districtIds,
       });
     }
+    applyObjectTypeFilter(qb, query, 'boiler');
 
     const rows = await qb.getRawMany<Record<string, unknown>>();
     return rows.map((raw) => ({
@@ -505,6 +588,7 @@ export class DashboardService {
         districtIds: query.districtIds,
       });
     }
+    applyObjectTypeFilter(qb, query, 'boiler');
 
     const rows = await qb.getRawMany<Record<string, string>>();
     return rows.map((raw) => {
@@ -523,6 +607,37 @@ export class DashboardService {
     });
   }
 
+  /**
+   * QURILMALAR — kartadagi «onlayn / jami» uchun.
+   * ⚠️⚠️ Ilgari bu son tuman chegarasisiz edi: tuman mas'uli butun
+   * viloyatning qurilmalar sonini ko'rardi. Endi amaldagi tuman bo'yicha
+   * (kotyolniki, aks holda qurilmaniki) va obyekt turi bo'yicha.
+   */
+  private deviceQuery(query: DashboardQueryDto, user?: AuthUser) {
+    const qb = this.devices
+      .createQueryBuilder('device')
+      .leftJoin('boilers', 'db', 'db.id = device.boiler_id')
+      .where('device.is_active = true');
+    applyDistrictScope(
+      qb,
+      user,
+      'COALESCE(db.district_id, device.district_id)',
+    );
+    if (query.districtIds?.length) {
+      qb.andWhere(
+        'COALESCE(db.district_id, device.district_id) IN (:...districtIds)',
+        { districtIds: query.districtIds },
+      );
+    }
+    if (query.objectTypeIds?.length) {
+      qb.andWhere(
+        'COALESCE(db.organization_id, device.organization_id) IN (SELECT o.id FROM organizations o WHERE o.object_type_id IN (:...objectTypeIds))',
+        { objectTypeIds: query.objectTypeIds },
+      );
+    }
+    return qb;
+  }
+
   private async countOpenAlerts(
     query: DashboardQueryDto,
     user?: AuthUser,
@@ -538,6 +653,7 @@ export class DashboardService {
         districtIds: query.districtIds,
       });
     }
+    applyObjectTypeFilter(qb, query, 'boiler');
     return qb.getCount();
   }
 }

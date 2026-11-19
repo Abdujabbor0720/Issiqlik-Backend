@@ -1,5 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from './base.entity';
+import { District } from './district.entity';
 
 /**
  * KATALOG YOZUVLARI — uchta jadval, bitta shakl.
@@ -83,10 +84,43 @@ export class ObjectType extends CatalogEntity {
   code!: string;
 }
 
-/** Tashkilot — kotyol O'RNATILGAN obyekt egasi (maktab, shifoxona, MFY). */
+/**
+ * MUASSASA (KATALOG YOZUVI) — kotyol O'RNATILGAN obyekt egasi: maktab,
+ * bog'cha, shifoxona…
+ *
+ * ⚠️⚠️ TUMANGA TEGISHLI (`districtKey`). «12-maktab» har tumanda bor,
+ * shuning uchun nom yagonaligi TUMAN ICHIDA
+ * (`UQ_organizations_district_name`: `COALESCE(district_key,''), name` —
+ * ifodali indeks, dekorator bilan e'lon qilib bo'lmaydi).
+ *
+ * ⚠️ Qurilma yuborgan `institution_name` bu yerga TO'G'RIDAN-TO'G'RI
+ * yozilmaydi: u faqat TAKLIF va admin tasdiqlagandagina katalog yozuviga
+ * aylanadi (`DevicesService.confirmLocation`).
+ */
 @Entity('organizations')
-@Index('UQ_organizations_name', ['name'], { unique: true })
 export class Organization extends CatalogEntity {
+  /** Tuman kaliti (`districts.key`). `null` — tarixiy, tumani aniqlanmagan yozuv. */
+  @Index('IDX_organizations_district_key')
+  @Column({
+    type: 'varchar',
+    length: 32,
+    name: 'district_key',
+    nullable: true,
+  })
+  districtKey!: string | null;
+
+  @ManyToOne(() => District, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'district_key', referencedColumnName: 'key' })
+  district!: District | null;
+
+  /** Ixtiyoriy MFY. */
+  @Column({ type: 'uuid', name: 'mahalla_id', nullable: true })
+  mahallaId!: string | null;
+
+  @ManyToOne(() => Mahalla, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'mahalla_id' })
+  mahalla!: Mahalla | null;
+
   /** Obyekt turi — `object_types` katalogidan. */
   @Index()
   @Column({ type: 'uuid', name: 'object_type_id', nullable: true })
@@ -98,4 +132,28 @@ export class Organization extends CatalogEntity {
 
   @Column({ type: 'varchar', length: 32, nullable: true })
   phone!: string | null;
+}
+
+/**
+ * MFY (MAHALLA) — tumanning ichki birligi.
+ *
+ * ⚠️ Ro'yxat `andijon-tumanlar-mfylar.json` dan import qilinadi
+ * (`npm run import:mfy`). Qo'lda ham qo'shiladi («Kataloglar → MFYlar»).
+ * O'chirilmaydi — arxivlanadi: muassasalar unga ishora qiladi.
+ */
+@Entity('mahallas')
+export class Mahalla extends BaseEntity {
+  /** ⚠️ Indeks: `UQ_mahallas_district_name (district_key, lower(name))`. */
+  @Column({ type: 'varchar', length: 32, name: 'district_key' })
+  districtKey!: string;
+
+  @ManyToOne(() => District, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'district_key', referencedColumnName: 'key' })
+  district!: District;
+
+  @Column({ type: 'varchar', length: 160 })
+  name!: string;
+
+  @Column({ type: 'boolean', name: 'is_archived', default: false })
+  isArchived!: boolean;
 }

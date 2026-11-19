@@ -28,7 +28,7 @@ import { TelemetryService } from './telemetry.service';
  *   • `POST /api/data` — bizning eski `modul1` proshivkasi:
  *       const char* API_URL = "http://localhost:3000/api/data";
  *
- *   • `POST /index.php/api/integrations/telemetry` — Xonobod v2.0.0:
+ *   • `POST /index.php/api/integrations/telemetry` — kotyol v2.0.0 / v2.1.0, xona v1.x:
  *       #define SERVER_URL "https://" SERVER_HOST
  *                          "/index.php/api/integrations/telemetry"
  *
@@ -163,7 +163,7 @@ export class IngestController {
     return this.service.ingest(parsed.dto, parsed.apiKey, parsed.raw, {
       ip: req.ip ?? req.socket.remoteAddress ?? null,
       firmwareVersion: parsed.firmwareVersion,
-      moduleTypeHeader: parsed.moduleTypeHeader,
+      deviceTypeHeader: parsed.deviceTypeHeader,
     });
   }
 }

@@ -73,6 +73,24 @@ export class CreateCatalogItemDto {
   @IsOptional()
   objectTypeId?: string | null;
 
+  // ── Muassasa va MFY uchun: tuman kaliti (`asaka`, `andijon-sh`) ──
+  @ApiPropertyOptional({
+    description:
+      'Muassasa va MFY: tuman kaliti (`districts.key`). MFY uchun majburiy.',
+    example: 'asaka',
+  })
+  @Transform(trimLower)
+  @Matches(/^[a-z][a-z0-9-]{1,31}$/, { message: 'Tuman kaliti noto‘g‘ri' })
+  @IsOptional()
+  districtKey?: string;
+
+  @ApiPropertyOptional({ description: 'Faqat muassasa: MFY', format: 'uuid' })
+  @Transform(toNullable)
+  @ValidateIf((_object, value) => value !== null)
+  @IsUUID('4')
+  @IsOptional()
+  mahallaId?: string | null;
+
   // ── Faqat obyekt turi uchun ──
   @ApiPropertyOptional({
     description: 'Mashina kaliti (`school`, `hospital`) — keyin o‘zgarmaydi',
@@ -102,4 +120,21 @@ export class CatalogQueryDto extends PaginationDto {
   @IsBoolean()
   @IsOptional()
   includeArchived?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Muassasa va MFY: faqat shu tuman (kalit)',
+    example: 'asaka',
+  })
+  @Transform(trimLower)
+  @Matches(/^[a-z][a-z0-9-]{1,31}$/, { message: 'Tuman kaliti noto‘g‘ri' })
+  @IsOptional()
+  districtKey?: string;
+
+  @ApiPropertyOptional({
+    description: 'Muassasa: faqat shu obyekt turi',
+    format: 'uuid',
+  })
+  @IsUUID('4')
+  @IsOptional()
+  objectTypeId?: string;
 }

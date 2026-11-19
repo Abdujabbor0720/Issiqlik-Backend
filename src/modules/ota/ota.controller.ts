@@ -21,15 +21,15 @@ import { ConfigService } from '@nestjs/config';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
-import type { ModuleType } from '../../common/constants/enums';
+import type { DeviceType } from '../../common/constants/enums';
 import { Public } from '../../common/decorators/public.decorator';
-import { parseModuleType } from '../../helpers/device-profile.helper';
+import { parseDeviceType } from '../../helpers/device-profile.helper';
 import { RawResponse } from '../../common/decorators/raw-response.decorator';
 import {
   extractApiKey,
   extractDeviceId,
   extractFirmwareVersion,
-  extractModuleTypeHeader,
+  extractDeviceTypeHeader,
 } from '../telemetry/dto/ingest.dto';
 import { DeviceThrottlerGuard } from '../telemetry/device-throttler.guard';
 import type { OtaCheckResponse } from './ota.service';
@@ -90,8 +90,17 @@ export class OtaController {
     @Query('device_id') deviceIdQuery: string | undefined,
     @Query('version') versionQuery: string | undefined,
     @Query('v') fileVersion: string | undefined,
+    /*
+     * ⚠️ `type=kotyol|xona` — YANGI (kotyol v2.1.0, xona v1.1.0). Eski
+     * proshivkada yo'q: unda tur `X-Device-Type` sarlavhasidan, u ham
+     * bo'lmasa `devices.device_type` dan olinadi.
+     *
+     * ⚠️ `inst=` (URL-encoded muassasa NOMI) ATAYLAB O'QILMAYDI: u erkin
+     * matn va identifikator sifatida ishlatilmaydi (§5.1).
+     */
+    @Query('type') typeQuery: string | undefined,
   ): Promise<void> {
-    const ctx = this.contextOf(req, deviceIdQuery);
+    const ctx = this.contextOf(req, deviceIdQuery, typeQuery);
 
     if (action === 'download') {
       await this.download(res, ctx, fileVersion ?? null);
@@ -106,7 +115,7 @@ export class OtaController {
         {
           ip: ctx.ip,
           firmwareVersion: ctx.firmwareVersion,
-          moduleType: ctx.moduleType,
+          deviceType: ctx.deviceType,
         },
       );
       this.sendFlatJson(res, result);
@@ -171,7 +180,7 @@ export class OtaController {
         ip: ctx.ip,
         firmwareVersion: ctx.firmwareVersion,
         institutionHint: this.asText(raw.institution_id),
-        moduleType: ctx.moduleType,
+        deviceType: ctx.deviceType,
       },
     );
   }
@@ -201,7 +210,7 @@ export class OtaController {
       {
         ip: ctx.ip,
         firmwareVersion: ctx.firmwareVersion,
-        moduleType: ctx.moduleType,
+        deviceType: ctx.deviceType,
       },
     );
 
@@ -307,6 +316,7 @@ export class OtaController {
   private contextOf(
     req: Request,
     deviceIdFallback: string | null | undefined,
+    typeQuery?: string,
   ): DeviceContext {
     const headers = req.headers as Record<string, unknown>;
     return {
@@ -319,10 +329,12 @@ export class OtaController {
       token: extractApiKey(headers, {}, req.query),
       firmwareVersion: extractFirmwareVersion(headers),
       /*
-       * ⚠️ `X-Module-Type` — xona moduli proshivkasi yuboradi (qozonxona
-       * proshivkasida YO'Q → `null`, tur bazadan olinadi).
+       * ⚠️ Ustuvorlik: `type=` → `X-Device-Type` → (yo'q bo'lsa `null`, tur
+       * bazadan olinadi). Eski proshivkada ikkalasi ham yo'q.
        */
-      moduleType: parseModuleType(extractModuleTypeHeader(headers)),
+      deviceType:
+        parseDeviceType(typeQuery) ??
+        parseDeviceType(extractDeviceTypeHeader(headers)),
       ip: req.ip ?? req.socket.remoteAddress ?? null,
     };
   }
@@ -344,6 +356,6 @@ interface DeviceContext {
   deviceId: string | null;
   token: string | null;
   firmwareVersion: string | null;
-  moduleType: ModuleType | null;
+  deviceType: DeviceType | null;
   ip: string | null;
 }

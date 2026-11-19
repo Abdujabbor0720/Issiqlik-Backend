@@ -4,9 +4,11 @@ import { Boiler } from '../../database/entities/boiler.entity';
 import {
   BoilerBrand,
   Firm,
+  Mahalla,
   ObjectType,
   Organization,
 } from '../../database/entities/catalog.entities';
+import { GeoModule } from '../geo/geo.module';
 import { CatalogsController } from './catalogs.controller';
 import { CatalogsService } from './catalogs.service';
 
@@ -17,8 +19,10 @@ import { CatalogsService } from './catalogs.service';
       Firm,
       Organization,
       ObjectType,
+      Mahalla,
       Boiler,
     ]),
+    GeoModule,
   ],
   controllers: [CatalogsController],
   providers: [CatalogsService],

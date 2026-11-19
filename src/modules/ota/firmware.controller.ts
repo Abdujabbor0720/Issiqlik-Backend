@@ -29,6 +29,7 @@ import { IdParamDto } from '../../common/dto/id-param.dto';
 import { OTA_PARTITION_MAX_BYTES } from '../../database/entities/firmware.entities';
 import {
   CreateRolloutDto,
+  UpdateRolloutLimitDto,
   UpdateRolloutStatusDto,
   UploadFirmwareDto,
 } from './dto/firmware.dto';
@@ -88,7 +89,12 @@ export class FirmwareController {
         file: { type: 'string', format: 'binary' },
         version: { type: 'string', example: '2.0.1' },
         note: { type: 'string' },
-        moduleType: { type: 'string', enum: ['boiler', 'room'] },
+        deviceType: {
+          type: 'string',
+          enum: ['kotyol', 'xona'],
+          description:
+            'Faqat ANDIJON_FW_MODULE belgisi yo‘q eski fayl uchun majburiy',
+        },
       },
       required: ['file'],
     },
@@ -105,7 +111,7 @@ export class FirmwareController {
       dto.version,
       dto.note,
       user,
-      dto.moduleType,
+      dto.deviceType,
     );
   }
 
@@ -115,6 +121,31 @@ export class FirmwareController {
    * o'qilmas bo'lib qolardi. HTTP usuli `DELETE` qoldirilgan, chunki
    * foydalanuvchi uchun bu «olib tashlash» amali.
    */
+  /**
+   * YUKLASHDAN OLDIN KO'RISH: versiya, belgidagi tur, taklif qilingan tur.
+   * ⚠️ Faylni saqlamaydi — panel tur tanlovini oldindan to'ldirishi uchun.
+   */
+  @Post('releases/inspect')
+  @RequirePermissions(PERMISSIONS.FIRMWARE_UPLOAD)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: OTA_PARTITION_MAX_BYTES, files: 1 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: '.bin faylini tekshirish (saqlanmaydi)' })
+  inspect(
+    @UploadedFile()
+    file: {
+      buffer: Buffer;
+      size: number;
+      originalname: string;
+    },
+  ) {
+    return this.service.inspect(file);
+  }
+
   @Delete('releases/:id')
   @RequirePermissions(PERMISSIONS.FIRMWARE_UPLOAD)
   @ApiOperation({ summary: 'Relizni arxivlash (o‘chirilmaydi)' })
@@ -151,6 +182,16 @@ export class FirmwareController {
   })
   setStatus(@Param() params: IdParamDto, @Body() dto: UpdateRolloutStatusDto) {
     return this.service.setRolloutStatus(params.id, dto.status);
+  }
+
+  /**
+   * BOSQICHMA-BOSQICH TARQATISH: 1 (sinov) → 10 → 50 → `null` (hammasi).
+   */
+  @Patch('rollouts/:id/limit')
+  @RequirePermissions(PERMISSIONS.FIRMWARE_ROLLOUT)
+  @ApiOperation({ summary: 'Tarqatish bosqichi — bir vaqtda nechta qurilma' })
+  setLimit(@Param() params: IdParamDto, @Body() dto: UpdateRolloutLimitDto) {
+    return this.service.setRolloutLimit(params.id, dto.maxDevices ?? null);
   }
 
   @Get('rollouts/:id/progress')

@@ -1,9 +1,10 @@
 import { Exclude } from 'class-transformer';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
-import { ModuleType } from '../../common/constants/enums';
+import { DeviceType } from '../../common/constants/enums';
 import { BaseEntity } from './base.entity';
 import { Boiler } from './boiler.entity';
 import { numericTransformer } from './column-transformers';
+import { Organization } from './catalog.entities';
 import { District } from './district.entity';
 
 /**
@@ -204,7 +205,7 @@ export class Device extends BaseEntity {
   // ───────────────── Xona moduli (DHT22) ─────────────────
 
   /**
-   * MODUL TURI — PLATA O'ZI AYTADI (`X-Module-Type` / `module_type`), aytmasa
+   * MODUL TURI — PLATA O'ZI AYTADI (`X-Module-Type` / `device_type`), aytmasa
    * — yukining shaklidan: faqat xona harorati yuboradigan plata `room`.
    *
    * ⚠️⚠️ OTA shu maydon bo'yicha ajratiladi: `boiler` relizi faqat `boiler`
@@ -215,10 +216,10 @@ export class Device extends BaseEntity {
   @Column({
     type: 'varchar',
     length: 16,
-    name: 'module_type',
-    default: ModuleType.BOILER,
+    name: 'device_type',
+    default: DeviceType.KOTYOL,
   })
-  moduleType!: ModuleType;
+  deviceType!: DeviceType;
 
   /**
    * PLATA AYTGAN JOYLASHUV — FAQAT KO'RSATISH UCHUN (`institutionHint` bilan
@@ -288,4 +289,41 @@ export class Device extends BaseEntity {
     nullable: true,
   })
   lastRoomReadingAt!: Date | null;
+
+  // ───────────────── Paneldagi joylashuv va token ─────────────────
+
+  /**
+   * PANELDAGI MUASSASA (katalog yozuvi) — kotyolga biriktirilmagan modul
+   * uchun.
+   *
+   * ⚠️⚠️ JOYLASHUVNING YAGONA MANBAI — PANEL. Qurilma yuborgan
+   * `district` / `object_type` / `institution_name` bu yerga
+   * TO'G'RIDAN-TO'G'RI yozilmaydi: panelda bo'sh bo'lsa TAKLIF
+   * (`reported*`) bo'lib turadi va admin tasdiqlaydi; to'la bo'lsa
+   * e'tiborsiz qoldiriladi (jurnalga ogohlantirish).
+   *
+   * Amaldagi joylashuv: kotyolga ulangan bo'lsa — kotyolniki
+   * (`boiler.organization_id`, `boiler.district_id`), aks holda shu maydon
+   * va `districtId` (`helpers/device-location.helper.ts`).
+   */
+  @Index('IDX_devices_organization_id')
+  @Column({ type: 'uuid', name: 'organization_id', nullable: true })
+  organizationId!: string | null;
+
+  @ManyToOne(() => Organization, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'organization_id' })
+  organization!: Organization | null;
+
+  /**
+   * OXIRGI SO'ROVDA ISHLATILGAN TOKEN TURI — `personal` (shaxsiy kalit) yoki
+   * `shared` (umumiy `DEVICE_SHARED_TOKEN`). «Qurilmalar» sahifasidagi
+   * «token turi» ustuni. Faqat O'ZGARGANDA yoziladi.
+   */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    name: 'last_token_kind',
+    nullable: true,
+  })
+  lastTokenKind!: 'personal' | 'shared' | null;
 }

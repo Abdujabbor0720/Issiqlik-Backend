@@ -184,25 +184,30 @@ async function main(): Promise<void> {
     console.log(`✔ Bosh administrator: ${adminLogin}`);
   }
 
-  // Demo operator — tuman kesimini tekshirish uchun.
+  /*
+   * Demo tuman mas'uli — tuman kesimini (API darajasidagi chegarani)
+   * tekshirish uchun. ⚠️ Faqat DEMO bazada: parol ochiq yozilgan.
+   */
   const operatorExists = await users.findOne({
-    where: { login: 'operator.jalaquduq' },
+    where: { login: 'operator.demo' },
   });
   if (!operatorExists) {
-    const jalaquduq = districtRows.find((d) => d.code === 'jalaquduq');
-    if (jalaquduq) {
+    const demoDistrict = districtRows.find((d) => d.key === 'asaka');
+    if (demoDistrict) {
       await users.save(
         users.create({
-          login: 'operator.jalaquduq',
+          login: 'operator.demo',
           passwordHash: await bcrypt.hash('operator2026', 10),
-          fullName: 'Jalaquduq tuman operatori',
+          fullName: `${demoDistrict.name} mas‘uli (demo)`,
           role: UserRole.OPERATOR,
-          districtId: jalaquduq.id,
+          districtId: demoDistrict.id,
           position: 'Issiqlik ta’minoti bo‘limi mutaxassisi',
           isActive: true,
         }),
       );
-      console.log('✔ Demo operator: operator.jalaquduq / operator2026');
+      console.log(
+        `✔ Demo tuman mas‘uli: operator.demo / operator2026 (${demoDistrict.name})`,
+      );
     }
   }
 
@@ -241,7 +246,7 @@ async function main(): Promise<void> {
     let schoolNo = 1;
 
     /*
-     * ⚠️ TASHKILOT NOMI YAGONA bo'lishi SHART (`UQ_organizations_name`).
+     * ⚠️ MUASSASA NOMI TUMAN ICHIDA YAGONA (`UQ_organizations_district_name`).
      * Shablonlarning bir qismida tartib raqami yo'q («{district} tuman
      * markaziy shifoxonasi») va bitta tumanda ikki marta tanlansa, nom
      * AYNAN takrorlanadi — baza esa butun partiyani rad etadi va seed
@@ -277,6 +282,8 @@ async function main(): Promise<void> {
 
         const org = organizations.create({
           name: uniqueOrgName(`${name} (${district.shortName})`),
+          // ⚠️ Muassasa katalogi tuman bo'yicha (`organizations.district_key`).
+          districtKey: district.key,
           /*
            * ⚠️ Tur KALIT bo'yicha topiladi, nom bo'yicha emas: nom
            * tahrirlanadi («Maktab» → «Umumta'lim maktabi») va unga

@@ -2,12 +2,12 @@ import { lotRef } from '../../helpers/boiler-label.helper';
 import {
   Injectable,
   Logger,
+  NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 import {
-  AuditAction,
   BoilerStatus,
   ProbeKind,
   UserRole,
@@ -40,7 +40,8 @@ import {
 } from '../../helpers/room-reading.helper';
 import {
   extractReportedProfile,
-  resolveModuleType,
+  inferDeviceType,
+  normalizeInstitutionName,
   type ReportedProfile,
 } from '../../helpers/device-profile.helper';
 import { tashkentDayStart } from '../../helpers/date.helpers';
@@ -50,8 +51,11 @@ import {
   DeviceAuthService,
   type AuthenticatedDevice,
 } from '../devices/device-auth.service';
-import { AuditService } from '../audit/audit.service';
 import { DistrictDirectoryService } from '../geo/district-directory.service';
+import {
+  ObjectTypeDirectoryService,
+  type ObjectTypeRecord,
+} from '../geo/object-type-directory.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SettingsService } from '../settings/settings.service';
@@ -87,21 +91,19 @@ export interface IngestMeta {
   /** `X-Firmware-Version` — eski proshivkada YO'Q (`null`). */
   firmwareVersion: string | null;
   /** `X-Module-Type` (xom) — qozonxona proshivkasida YO'Q. */
-  moduleTypeHeader?: string | null;
+  deviceTypeHeader?: string | null;
+}
+
+/** Plata aytgan va TEKSHIRILGAN joylashuv (noma'lum kalitlar `ignored` da). */
+interface ReportedLocation {
+  district: DistrictRecord | null;
+  objectType: ObjectTypeRecord | null;
+  institution: string | null;
+  ignored: string[];
 }
 
 /** Bir xil ogohlantirish bitta qurilma uchun shundan tez-tez yozilmaydi. */
 const PROFILE_WARN_INTERVAL_MS = 30 * 60_000;
-
-/**
- * O'LCHOV VAQTI CHEGARALARI (§3).
- *
- * ⚠️ ESP32 da real-time soat YO'Q. NTP ishlamasa, qurilma 1970-yilni
- * yoki tasodifiy vaqtni ko'rsatadi. Shuning uchun uning vaqtiga
- * ko'r-ko'rona ishonib bo'lmaydi.
- */
-const MEASURED_AT_MAX_FUTURE_MS = 5 * 60_000;
-const MEASURED_AT_MAX_AGE_MS = 24 * 60 * 60_000;
 
 /**
  * UNIQUE INDEKS BUZILISHI (PostgreSQL `23505`).
@@ -139,6 +141,19 @@ export interface SeriesPoint {
   inletAvg: number | null;
 }
 
+export interface DeviceSeriesPoint {
+  t: string;
+  /** Kirish (obratka), °C — kotyol moduli. */
+  inlet: number | null;
+  /** Chiqish (podacha), °C — kotyol moduli. */
+  outlet: number | null;
+  /** Xona havosi, °C — xona moduli. */
+  room: number | null;
+  /** Namlik, % — xona moduli (proshivka yuborsa). */
+  humidity: number | null;
+  count: number;
+}
+
 @Injectable()
 export class TelemetryService {
   private readonly logger = new Logger(TelemetryService.name);
@@ -148,6 +163,8 @@ export class TelemetryService {
    * to'lib, haqiqiy nosozliklar ko'rinmay qolardi.
    */
   private readonly profileWarnedAt = new Map<string, number>();
+  /** Plata joylashuvi panel bilan oxirgi marta qachon solishtirilgan. */
+  private readonly locationCheckedAt = new Map<string, number>();
 
   constructor(
     @InjectRepository(TelemetryReading)
@@ -160,16 +177,21 @@ export class TelemetryService {
     private readonly realtime: RealtimeGateway,
     private readonly roomsService: RoomsService,
     private readonly districtDirectory: DistrictDirectoryService,
-    private readonly audit: AuditService,
+    private readonly objectTypes: ObjectTypeDirectoryService,
   ) {}
 
   /**
-   * ESP32 DAN KELGAN SIGNAL.
+   * ESP32 DAN KELGAN SIGNAL (kotyol v2.0.0/v2.1.0, xona v1.0.0/v1.1.0).
    *
-   * ⚠️ Bu tizimdagi eng TEZ-TEZ chaqiriladigan funksiya (sekundiga
-   * o'nlab marta). Shuning uchun u ATAYLAB sodda: bitta kalit
-   * tekshiruvi, bitta `INSERT`, bitta `UPDATE`. Og'ir ishlar (hisobot,
-   * agregat) bu yerda EMAS — ular cron yoki so'rov paytida bajariladi.
+   * Tartib — har bosqich OLDINGISIGA bog'liq:
+   *   1) plata profili (tur, joylashuv) xom yukdan — XATO TASHLAMAYDI;
+   *   2) autentifikatsiya: 401 (token) / 403 (ro'yxatda yo'q → «Yangi qurilmalar»);
+   *   3) tur va joylashuv sinxroni (joylashuv faqat TAKLIF — §4);
+   *   4) harorat oralig'i: kotyol -55…125, xona -40…80, tashqarisi — 422;
+   *   5) o'lchov SERVER vaqti bilan yoziladi (`measured_at` o'qilmaydi).
+   *
+   * ⚠️ Bu tizimdagi eng TEZ-TEZ chaqiriladigan funksiya (har qurilma 60 s da).
+   * Og'ir ishlar (hisobot, agregat) bu yerda EMAS.
    */
   async ingest(
     dto: IngestDto,
@@ -177,293 +199,121 @@ export class TelemetryService {
     rawPayload: Record<string, unknown>,
     meta: IngestMeta,
   ): Promise<IngestResult> {
-    /*
-     * ⚠️⚠️ AUTENTIFIKATSIYA `DeviceAuthService` DA — bu yerda NUSXA
-     * YO'Q. Qurilma OTA uchun ham AYNI token bilan keladi va token
-     * tekshiruvi ikki joyda bo'lsa, ular bir-biridan ajralib
-     * ketishi — vaqt masalasi edi. Xavfsizlik mantig'ining ikki
-     * nusxasi esa eng yomon turdagi nusxa.
-     *
-     * U o'zi mos HTTP xatosini tashlaydi: 401 (token yo'q/xato),
-     * 403 (qurilma ro'yxatda yo'q — kutish ro'yxatiga yoziladi).
-     */
-    /*
-     * ⚠️ TUMAN AUTENTIFIKATSIYADAN OLDIN aniqlanadi: yangi plata avtomatik
-     * ro'yxatga olinsa, u darhol O'Z tumani bilan yaratiladi va boshqa
-     * tuman mas'ullariga ko'rinmaydi.
-     */
-    const districtRaw = extractDistrictRef(rawPayload);
-    const districtText =
-      districtRaw === undefined ? null : sanitizeReported(districtRaw);
-    const district = await this.districtDirectory.resolve(districtRaw);
-
-    /*
-     * ⚠️ XONA (HAVO) O'LCHOVLARI va PLATA PROFILI — xom yukdan, DTO dan
-     * emas. Ikkalasi ham XATO TASHLAMAYDI: buzuq qism so'rovni rad etmaydi,
-     * faqat jurnalga yoziladi.
-     */
-    const roomPayload = extractRoomSamples(rawPayload);
-    const profile = extractReportedProfile(
-      rawPayload,
-      meta.moduleTypeHeader ?? null,
-    );
-    const hasBoilerReading =
-      dto.inletTemperature !== undefined ||
-      dto.outletTemperature !== undefined ||
-      dto.singleTemperature !== undefined;
-    const hasRoomReading = roomPayload.source !== undefined;
-
-    const { device } = await this.auth.authenticate(dto.deviceId, apiKey, {
-      ip: meta.ip,
-      firmwareVersion: meta.firmwareVersion ?? dto.firmware ?? null,
-      institutionHint: dto.institutionId ?? null,
-      districtId: district?.id ?? null,
-      reportedDistrict: districtText,
-      // ⚠️ Faqat YANGI qurilma uchun (u hali hech qaysi kotyolga ulanmagan).
-      moduleType: resolveModuleType({
-        declared: profile.declaredType,
-        hasBoilerReading,
-        hasRoomReading,
-        isBound: false,
-      }),
-    });
-
     const now = new Date();
     const ip = meta.ip?.slice(0, 45) ?? null;
     const firmware = meta.firmwareVersion ?? dto.firmware ?? null;
 
-    /*
-     * ⚠️⚠️ TUMAN SINXRONLASH — o'lchov yozilishidan OLDIN. Plata boshqa
-     * tumanni yuborsa va eski tumandagi kotyolga ulangan bo'lsa, u shu
-     * yerda ajratiladi (`device.boilerId = null`) va BU o'lchov ham eski
-     * binoga yozilmaydi.
-     */
-    await this.syncDeviceDistrict(device, districtText, district);
-
-    /*
-     * ⚠️ TUR va JOYLASHUV — tuman sinxronidan KEYIN: u modulni kotyoldan
-     * ajratgan bo'lishi mumkin, tur xulosasi esa aynan «ulanganmi» ga bog'liq.
-     */
-    await this.auth.applyModuleType(
-      device,
-      resolveModuleType({
-        declared: profile.declaredType,
-        hasBoilerReading,
-        hasRoomReading,
-        isBound: Boolean(device.boilerId),
-      }),
+    const profile = extractReportedProfile(
+      rawPayload,
+      meta.deviceTypeHeader ?? null,
     );
-    await this.syncReportedProfile(device, profile);
+    const roomPayload = extractRoomSamples(rawPayload);
+    const hasBoilerReading =
+      dto.inletTemperature !== undefined ||
+      dto.outletTemperature !== undefined ||
+      dto.singleTemperature !== undefined;
+    const inferredType = inferDeviceType({
+      hasRoomTemperatureField: roomPayload.source === 'single',
+    });
+    const location = await this.readReportedLocation(rawPayload, profile);
 
-    /*
-     * ⚠️⚠️ HAROR+ATLARNI TASNIFLASH — `classifyProbeReading` da, BIR
-     * joyda. Qaysi son kirish, qaysi biri chiqish ekanini aniqlash
-     * tizimdagi eng xavfli qaror va u shu funksiyadan boshqa hech
-     * qayerda takrorlanmaydi.
-     */
-    const classified = classifyProbeReading({
-      inlet: dto.inletTemperature ?? null,
-      outlet: dto.outletTemperature ?? null,
-      single: dto.singleTemperature ?? null,
-      probeHint: dto.probeHint ?? null,
+    const { device } = await this.auth.authenticate(dto.deviceId, apiKey, {
+      ip,
+      firmwareVersion: firmware,
+      institutionHint: dto.institutionId ?? null,
+      deviceType: profile.declaredType ?? inferredType,
+      reportedDistrictKey: location.district?.key ?? null,
+      reportedObjectType: location.objectType?.code ?? null,
+      reportedInstitution: location.institution,
     });
 
+    await this.auth.applyDeviceType(device, {
+      declared: profile.declaredType,
+      inferred: inferredType,
+    });
+    await this.syncReportedLocation(device, location, profile.mfy);
+    this.warnRejectedProfile(device.deviceId, profile, location.ignored);
     this.logRejectedRooms(device.deviceId, roomPayload);
 
     /*
      * ⚠️⚠️ YAROQSIZ O'LCHOV — 422, LEKIN QURILMA «TIRIK» DEB BELGILANADI.
-     *
-     * Qurilma TIRIKLIGI va O'LCHOVNING yaroqliligi — IKKI BOSHQA
-     * narsa. Datchik uzilgan plata har daqiqada aloqaga chiqadi,
-     * lekin yaroqli harorat bermaydi. `lastSeenAt` yangilanmasa,
-     * kabinetda «qurilma o'lgan» bo'lib ko'rinardi va ta'mirchi
-     * modem yoki Wi-Fi'ni tekshirib yurardi — muammo esa DATCHIKDA.
-     *
-     * Kotyolning `lastReadingAt` i esa YANGILANMAYDI: yaroqli o'lchov
-     * yo'q, demak kotyol holati haqiqatan ham noma'lum va u belgilangan
-     * muddatdan keyin «aloqa yo'q» ga o'tishi KERAK.
+     * Qurilma tirikligi va o'lchovning yaroqliligi — ikki boshqa narsa:
+     * `lastSeenAt` yangilanmasa, datchigi nosoz plata kabinetda «o'lgan»
+     * bo'lib ko'rinardi va ta'mirchi Wi-Fi'ni tekshirib yurardi.
      */
-    if (!classified) {
-      /*
-       * ⚠️⚠️ QUVUR O'LCHOVI YO'Q, LEKIN XONA HARORATI BOR — 2xx, 422 EMAS.
-       *
-       * Uch holat: (a) XONA MODULI (DHT22) — u suv haroratini HECH QACHON
-       * yubormaydi; (b) quvur datchiklari uzilgan, xona datchiklari
-       * ishlayapti; (c) plata faqat xonalar uchun o'rnatilgan. 422
-       * qaytarilsa, proshivka (§3) butun yukni TASHLARDI va xona harorati
-       * ham yo'qolardi.
-       *
-       * ⚠️ KOTYOL O'LCHOVI YARATILMAYDI va kotyol holatiga TEGILMAYDI: suv
-       * harorati haqiqatan noma'lum. Xona yozuvi faqat kotyolga ulangan
-       * modulda (xona binoga tegishli); ulanmagan modulning qiymati
-       * qurilmaning o'zida turadi va «ESP32 modullari» da ko'rinadi.
-       */
-      const roomAccepted = roomPayload.samples.length > 0;
-      const roomRecordedAt = roomAccepted
-        ? (this.resolveMeasuredAt(dto.measuredAt, now, device.deviceId) ?? now)
-        : now;
-      const fresh = roomAccepted
-        ? await this.recordRoomSnapshot(
-            device.id,
-            roomPayload.samples,
-            profile.humidity,
-            roomRecordedAt,
-          )
-        : false;
-
-      /*
-       * ⚠️⚠️ QURILMA «TIRIK» DEB BELGILANADI — o'lchov yaroqsiz bo'lsa ham.
-       * Datchigi uzilgan plata har daqiqada aloqaga chiqadi; `lastSeenAt`
-       * yangilanmasa, kabinetda «qurilma o'lgan» bo'lib ko'rinardi va
-       * ta'mirchi Wi-Fi'ni tekshirib yurardi — muammo esa DATCHIKDA.
-       * Kotyolning `lastReadingAt` i esa YANGILANMAYDI.
-       */
+    const invalid = this.findInvalidTemperature(dto, roomPayload);
+    if (invalid || (!hasBoilerReading && roomPayload.samples.length === 0)) {
       await this.devices.update(device.id, {
         lastSeenAt: now,
         lastIpAddress: ip,
         ...(firmware ? { firmwareVersion: firmware } : {}),
-        ...(roomAccepted && dto.institutionId
-          ? { institutionHint: dto.institutionId }
-          : {}),
-        ...(fresh
-          ? { readingsCount: (): string => '"readings_count" + 1' }
-          : {}),
       });
-
-      if (roomAccepted) {
-        const accepted = device.boilerId
-          ? await this.ingestRooms(
-              device.boilerId,
-              this.roomSamplesFor(device, roomPayload),
-              roomRecordedAt,
-              now,
-            )
-          : fresh
-            ? roomPayload.samples.length
-            : 0;
-        return {
-          ok: true,
-          nextIntervalSec: 30,
-          status: null,
-          boilerAssigned: Boolean(device.boilerId),
-          probe: null,
-          rooms: accepted,
-        };
+      if (invalid) {
+        this.logger.warn(`Qurilma ${device.deviceId}: ${invalid}`);
       }
-
-      /*
-       * ⚠️ Jurnal faqat SUV harorati kelib, yaroqsiz bo'lganda — bu
-       * nosozlik dalili. Hech narsa yubormagan plata har daqiqada shu
-       * qatorni yozib, jurnalni to'ldirmasligi kerak.
-       */
-      if (hasBoilerReading) {
-        this.logger.warn(
-          `Qurilma ${device.deviceId}: yaroqli harorat yo‘q ` +
-            `(kirish=${dto.inletTemperature ?? '—'}, ` +
-            `chiqish=${dto.outletTemperature ?? '—'}, ` +
-            `yakka=${dto.singleTemperature ?? '—'})`,
-        );
-      }
-
-      /*
-       * ⚠️ 422 QOLADI — kotyol harorati ham, xona harorati ham yo'q (yoki
-       * hammasi diapazondan tashqarida). Qurilma uni «butunlay rad
-       * etildi» deb o'qiydi va bu yukni qayta yubormaydi — to'g'ri: unda
-       * saqlanadigan narsa yo'q. Xabar sababni aniq aytadi.
-       */
       throw new UnprocessableEntityException(
-        hasBoilerReading
-          ? `Harorat o‘lchov diapazonidan tashqarida (${DS18B20_MIN_C}…${DS18B20_MAX_C} °C)`
-          : hasRoomReading
+        invalid ??
+          (roomPayload.source !== undefined
             ? `Xona harorati o‘lchov diapazonidan tashqarida (${AIR_MIN_C}…${AIR_MAX_C} °C)`
-            : 'Harorat yuborilmagan: temperature_c yoki room_temperature_c kerak',
+            : 'Harorat yuborilmagan: temperature_c, inlet/outlet_temperature_c yoki room_temperature_c kerak'),
       );
     }
 
     /*
-     * ⚠️ TASHLANGAN QIYMATLAR DALIL: `-127` — sim uzilgan, aniq
-     * nosozlik belgisi. O'lchov qabul qilindi (boshqa datchik
-     * ishlayapti), lekin sabab jurnalda qolishi kerak.
+     * ⚠️⚠️ QAYSI SON KIRISH, QAYSI BIRI CHIQISH — `classifyProbeReading` da,
+     * BIR joyda. Yakka `probe: "inlet"` o'lchovi kirish chizig'iga, `outlet`
+     * (yoki ishorasiz) — chiqish chizig'iga tushadi.
      */
-    if (classified.rejected.length > 0) {
-      const detail = classified.rejected
-        .map((item) => `${item.probe}=${item.value}`)
-        .join(', ');
-      this.logger.warn(
-        `Qurilma ${device.deviceId}: datchik nosoz bo‘lishi mumkin (${detail})`,
-      );
-    }
+    const classified = hasBoilerReading
+      ? classifyProbeReading({
+          inlet: dto.inletTemperature ?? null,
+          outlet: dto.outletTemperature ?? null,
+          single: dto.singleTemperature ?? null,
+          probeHint: dto.probeHint ?? null,
+        })
+      : null;
+
+    const thresholds = classified ? await this.settings.thresholds() : null;
+    const readingStatus =
+      classified && thresholds
+        ? resolveBoilerStatus(
+            { temperature: classified.outlet, lastReadingAt: now, now },
+            thresholds,
+          )
+        : null;
+    const roomAverage =
+      roomPayload.samples.length > 0
+        ? Math.round(
+            (roomPayload.samples.reduce(
+              (acc, item) => acc + item.temperature,
+              0,
+            ) /
+              roomPayload.samples.length) *
+              100,
+          ) / 100
+        : null;
 
     /*
-     * ⚠️ MUASSASA SOZLAMASI O'ZGARGANINI AYTADI. Qiymatga ishonilmaydi
-     * (§3), lekin u O'ZGARGANI muhim: demak platani boshqa binoga
-     * ko'chirgan yoki sozlashda adashgan. Kotyol esa hamon eski
-     * biriktirishda qolgan va ma'lumot NOTO'G'RI binoga yozilayapti.
+     * ⚠️⚠️ `boiler_id` FAQAT KOTYOL O'LCHOVIDA. Xona moduli kotyolga
+     * ulangan bo'lsa ham uning qatori `boiler_id = null`: kotyol grafigi va
+     * holati `boiler_id` bo'yicha o'qiladi va havo harorati suv harorati
+     * chizig'iga aralashmasligi kerak. Qurilma grafigi `device_id` bo'yicha.
      */
-    if (
-      dto.institutionId &&
-      device.institutionHint &&
-      dto.institutionId !== device.institutionHint
-    ) {
-      this.logger.warn(
-        `Qurilma ${device.deviceId}: muassasa sozlamasi o‘zgardi ` +
-          `(${device.institutionHint} → ${dto.institutionId}) — ` +
-          'kotyolga biriktirishni tekshirish kerak',
-      );
-    }
-
-    const measuredAt = this.resolveMeasuredAt(
-      dto.measuredAt,
-      now,
-      device.deviceId,
-    );
-
-    /*
-     * ⚠️⚠️ O'LCHOV GRAFIKDA QAYSI NUQTAGA TUSHADI. Oflayn navbatdan
-     * kelgan o'lchov O'Z vaqtiga qo'yiladi, aks holda 3 soatlik
-     * uzilishdan keyin barcha o'lchov bitta daqiqaga to'planib,
-     * grafikda vertikal devor paydo bo'lardi.
-     */
-    const recordedAt = measuredAt ?? now;
-    const thresholds = await this.settings.thresholds();
-
-    /*
-     * ⚠️⚠️ O'LCHOV HOLATI O'Z LAHZASIDA baholanadi (`now: recordedAt`).
-     *
-     * 3 soat oldingi 60 °C o'lchovi O'SHA PAYTDA «faol» edi. Agar
-     * hozirgi vaqt bilan baholansa, «eskirgan» deb `offline` bo'lib
-     * muhrlanardi va kechagi hisobot «kun bo'yi aloqa yo'q edi» deb
-     * yolg'on ko'rsatardi.
-     */
-    const readingStatus = resolveBoilerStatus(
-      {
-        temperature: classified.outlet,
-        lastReadingAt: recordedAt,
-        now: recordedAt,
-      },
-      thresholds,
-    );
-
     const stored = await this.storeReading({
       deviceId: device.id,
-      boilerId: device.boilerId,
-      // ⚠️ Asosiy ustun — DOIM chiqish harorati.
-      temperature: classified.outlet,
-      inletTemperature: classified.inlet,
-      outletTemperature: classified.outlet,
-      probe: classified.probe,
+      boilerId: classified ? device.boilerId : null,
+      temperature: classified?.outlet ?? null,
+      inletTemperature: classified?.inlet ?? null,
+      outletTemperature: classified?.outlet ?? null,
+      probe: classified?.probe ?? null,
       status: readingStatus,
-      recordedAt,
-      measuredAt,
+      recordedAt: now,
+      measuredAt: null,
+      roomTemperature: roomAverage,
+      humidity: profile.humidity ?? null,
       rawPayload,
     });
 
-    /*
-     * ⚠️ `readingsCount` FAQAT yozilgan o'lchov uchun oshiriladi:
-     * takrorlangan (idempotent rad etilgan) o'lchov hisobni
-     * shishirib, «qurilma 2 barobar ko'p signal yuboryapti» degan
-     * yolg'on manzara yaratardi.
-     */
     await this.devices.update(device.id, {
       lastSeenAt: now,
       lastIpAddress: ip,
@@ -474,168 +324,98 @@ export class TelemetryService {
         : {}),
     });
 
-    /*
-     * ⚠️ Xona datchigi bor qozonxona moduli ham kotyolga ulanmasdan OLDIN
-     * xona haroratini ko'rsatadi (qurilma darajasida).
-     */
-    if (stored) {
+    if (roomPayload.samples.length > 0 || profile.humidity !== undefined) {
       await this.recordRoomSnapshot(
         device.id,
         roomPayload.samples,
         profile.humidity,
-        recordedAt,
+        now,
       );
     }
 
-    if (device.boilerId && stored) {
+    if (classified && thresholds && device.boilerId && stored) {
+      if (classified.rejected.length > 0) {
+        this.logger.warn(
+          `Qurilma ${device.deviceId}: datchik nosoz bo‘lishi mumkin (` +
+            classified.rejected
+              .map((item) => `${item.probe}=${item.value}`)
+              .join(', ') +
+            ')',
+        );
+      }
       await this.applyToBoiler({
         boilerId: device.boilerId,
         inlet: classified.inlet,
         outlet: classified.outlet,
         probe: classified.probe,
-        recordedAt,
+        recordedAt: now,
         now,
         thresholds,
       });
     }
 
     /*
-     * ⚠️ Xonalar FAQAT yangi yozilgan o'lchovda (`stored`): takrorlangan
-     * (oflayn navbat qayta yuborgan) yuk xonalarni ikkinchi marta
-     * yozmasligi kerak. Kotyolga biriktirilmagan qurilmada xona
-     * yaratilmaydi — u qaysi binoda ekani noma'lum; biriktirilgandan
-     * keyingi birinchi signalda xonalar o'zi paydo bo'ladi.
+     * ⚠️ Xona yozuvi faqat KOTYOLGA ULANGAN modulda (xona binoga tegishli).
+     * Ulanmagan modulning qiymati qurilmaning o'zida va qurilma grafigida.
      */
     const roomsAccepted =
-      device.boilerId && stored
-        ? await this.ingestRooms(
-            device.boilerId,
-            this.roomSamplesFor(device, roomPayload),
-            recordedAt,
-            now,
-          )
-        : 0;
+      roomPayload.samples.length === 0
+        ? 0
+        : device.boilerId
+          ? await this.ingestRooms(
+              device.boilerId,
+              this.roomSamplesFor(device, roomPayload),
+              now,
+              now,
+            )
+          : roomPayload.samples.length;
 
     return {
       ok: true,
-      rooms: roomsAccepted,
-      /*
-       * ⚠️ Faqat ESKI proshivka uchun ishora: v2.0.0 bu maydonni
-       * o'qimaydi, uning oralig'i `config.h` da qotirilgan (60 s).
-       */
+      /* ⚠️ Faqat ESKI `modul1` uchun ishora: yangi proshivka oralig'i qotirilgan (60 s). */
       nextIntervalSec: 30,
       status: readingStatus,
       boilerAssigned: Boolean(device.boilerId),
-      probe: classified.probe,
+      probe: classified?.probe ?? null,
+      rooms: roomsAccepted,
     };
   }
 
   /**
-   * PLATA YUBORGAN TUMANNI QURILMAGA YOZISH.
+   * QAT'IY ORALIQ TEKSHIRUVI (§4): kotyol -55…125 °C, xona -40…80 °C.
    *
-   * ⚠️⚠️ BIZNES QARORI (2026-11-14): tuman — plataniki, kabinetda
-   * o'zgartirilmaydi. Plata BOSHQA tumanni yuborsa (qayta sozlangan yoki
-   * boshqa joyga ko'chirilgan) va eski tumandagi kotyolga ulangan bo'lsa —
-   * modul kotyoldan AVTOMATIK AJRATILADI. Aks holda boshqa binoning harorati
-   * eski binoga yozilaverardi. Modul yangi tuman mas'ulining
-   * «Biriktirilmagan» ro'yxatiga tushadi, eski kotyol esa «aloqa yo'q»
-   * bo'lib, ogohlantirish beradi.
+   * ⚠️ Yangi proshivka nosoz datchikni o'zi chiqarib tashlaydi (yakka
+   * `temperature_c` + `probe`), demak oraliqdan tashqaridagi qiymat — buzuq
+   * yuk. `rooms[]` massivi (kotyol modulining qo'shimcha datchiklari) bu
+   * qoidadan TASHQARIDA: undagi bitta yaroqsiz datchik qolganlarini rad
+   * etmasligi kerak — ular alohida jurnalga yoziladi.
    *
-   * ⚠️ Server taniy olmagan qiymat tumanni O'ZGARTIRMAYDI — faqat xom
-   * qiymat saqlanadi va kabinetda ko'rinadi. Noto'g'ri kod modulni
-   * «hech qaysi tumanga» chiqarib yubormasligi kerak.
-   *
-   * ⚠️ Yozuv faqat QIYMAT O'ZGARGANDA: har signalda UPDATE — 2000 qurilmada
-   * sekundiga o'nlab bekor yozuv.
+   * @returns Xato matni yoki `null`.
    */
-  private async syncDeviceDistrict(
-    device: AuthenticatedDevice,
-    reported: string | null,
-    district: DistrictRecord | null,
-  ): Promise<void> {
-    // Eski proshivka — tuman yubormaydi, hech narsa o'zgarmaydi.
-    if (reported === null) return;
-
-    if (!district) {
-      if (device.reportedDistrict !== reported) {
-        await this.devices.update(device.id, { reportedDistrict: reported });
-        device.reportedDistrict = reported;
-        this.logger.warn(
-          `Qurilma ${device.deviceId}: noma‘lum tuman «${reported}» — ` +
-            'tuman o‘zgartirilmadi (plata menyusidagi kodni tekshiring)',
-        );
-      }
-      return;
-    }
-
-    if (device.districtId === district.id) {
-      if (device.reportedDistrict !== reported) {
-        await this.devices.update(device.id, { reportedDistrict: reported });
-        device.reportedDistrict = reported;
-      }
-      return;
-    }
-
-    const previousDistrictId = device.districtId;
-    let detached: { id: string; lotNumber: string | null } | null = null;
-
-    if (device.boilerId) {
-      const boiler = await this.boilers.findOne({
-        where: { id: device.boilerId },
-        select: { id: true, lotNumber: true, districtId: true },
-      });
-      if (boiler && boiler.districtId !== district.id) {
-        /*
-         * ⚠️ SHARTLI YOZUV (`boiler_id = :old`): o'qish va yozish orasida
-         * admin modulni allaqachon boshqa kotyolga ko'chirgan bo'lsa, uning
-         * qarori BOSIB KETILMAYDI.
-         */
-        const result = await this.devices
-          .createQueryBuilder()
-          .update()
-          .set({
-            boilerId: null,
-            districtId: district.id,
-            reportedDistrict: reported,
-          })
-          .where('id = :id', { id: device.id })
-          .andWhere('boiler_id = :boilerId', { boilerId: boiler.id })
-          .execute();
-        if (result.affected) detached = boiler;
+  private findInvalidTemperature(
+    dto: IngestDto,
+    roomPayload: ParsedRoomSamples,
+  ): string | null {
+    const fields: Array<[string, number | undefined]> = [
+      ['inlet_temperature_c', dto.inletTemperature],
+      ['outlet_temperature_c', dto.outletTemperature],
+      ['temperature_c', dto.singleTemperature],
+    ];
+    for (const [name, value] of fields) {
+      if (value === undefined) continue;
+      if (
+        !Number.isFinite(value) ||
+        value < DS18B20_MIN_C ||
+        value > DS18B20_MAX_C
+      ) {
+        return `${name}=${String(value).slice(0, 16)} kotyol oralig‘idan tashqarida (${DS18B20_MIN_C}…${DS18B20_MAX_C} °C)`;
       }
     }
-
-    if (!detached) {
-      await this.devices.update(device.id, {
-        districtId: district.id,
-        reportedDistrict: reported,
-      });
-    } else {
-      device.boilerId = null;
+    if (roomPayload.source === 'single' && roomPayload.rejected.length > 0) {
+      const value = String(roomPayload.rejected[0].value).slice(0, 16);
+      return `room_temperature_c=${value} xona oralig‘idan tashqarida (${AIR_MIN_C}…${AIR_MAX_C} °C)`;
     }
-    device.districtId = district.id;
-    device.reportedDistrict = reported;
-
-    if (detached) {
-      this.logger.warn(
-        `Qurilma ${device.deviceId}: tuman o‘zgardi → «${district.name}». ` +
-          `${lotRef(detached.lotNumber)} kotyolidan AVTOMATIK ajratildi`,
-      );
-      await this.audit.log({
-        action: AuditAction.UPDATE,
-        entityName: 'Device',
-        entityId: device.id,
-        summary:
-          `Modul ${device.deviceId} platada «${district.name}» tumani tanlangani ` +
-          `uchun ${lotRef(detached.lotNumber)} kotyolidan avtomatik ajratildi`,
-        before: { boilerId: detached.id, districtId: previousDistrictId },
-        after: { boilerId: null, districtId: district.id },
-      });
-    } else if (previousDistrictId) {
-      this.logger.log(
-        `Qurilma ${device.deviceId}: tuman yangilandi → «${district.name}»`,
-      );
-    }
+    return null;
   }
 
   /**
@@ -759,47 +539,186 @@ export class TelemetryService {
   }
 
   /**
-   * PLATA AYTGAN JOYLASHUV (MFY, muassasa, obyekt turi).
+   * PLATA AYTGAN JOYLASHUVNI O'QISH VA TEKSHIRISH.
    *
-   * ⚠️ Faqat KELGAN va O'ZGARGAN maydon yoziladi: kelmagani o'chirilmaydi
-   * (talab), o'zgarmagani uchun UPDATE yo'q — 2000 qurilma har daqiqada
-   * bekorga yozmasligi uchun.
+   * ⚠️ Noma'lum tuman yoki obyekt turi kaliti so'rovni RAD ETMAYDI (§4) —
+   * maydon e'tiborsiz qoldiriladi (`ignored`, jurnalga). Muassasa nomi —
+   * erkin matn (48 baytgacha, apostrof bo'lishi mumkin): yangi proshivka
+   * `institution_name`, eskisi `institution_id` yuboradi; ikkinchisi NOM
+   * EMAS (`maktab-4`) va `institution_hint` da alohida saqlanadi.
    */
-  private async syncReportedProfile(
-    device: AuthenticatedDevice,
+  private async readReportedLocation(
+    raw: Record<string, unknown>,
     profile: ReportedProfile,
+  ): Promise<ReportedLocation> {
+    const ignored: string[] = [];
+    const districtRaw = extractDistrictRef(raw);
+    const district =
+      districtRaw === undefined
+        ? null
+        : await this.districtDirectory.resolve(districtRaw);
+    if (districtRaw !== undefined && !district) ignored.push('district');
+
+    const objectType =
+      profile.objectType === undefined
+        ? null
+        : await this.objectTypes.resolve(profile.objectType);
+    if (profile.objectType !== undefined && !objectType)
+      ignored.push('object_type');
+
+    return {
+      district,
+      objectType,
+      institution: profile.institution ?? null,
+      ignored,
+    };
+  }
+
+  /**
+   * TAKLIF YOKI OGOHLANTIRISH — joylashuv PANELDAN olinadi (§4).
+   *
+   * ⚠️⚠️ Qurilma ↔ muassasa bog'lanishi FAQAT `device_id` orqali, paneldagi
+   * qurilmalar jadvalidan. Plata yuborgan joylashuv:
+   *   • `reported_*` ustunlariga yoziladi (o'zgarganda);
+   *   • panelda shu maydon BO'SH bo'lsa — bu TAKLIF: «Qurilmalar» sahifasida
+   *     ko'rinadi va admin bir bosishda tasdiqlaydi (`confirmLocation`);
+   *   • panelda TO'LA va farq qilsa — e'tiborsiz, jurnalga ogohlantirish.
+   * Ilgarigi «tuman plataniki, kotyoldan avtomatik ajratiladi» qoidasi
+   * OLIB TASHLANDI: endi plata panelni hech qachon o'zgartirmaydi.
+   *
+   * ⚠️ Panel bilan solishtirish uchun so'rov kerak — u qurilma uchun 30
+   * daqiqada bir marta yoki yuborilgan qiymat o'zgarganda bajariladi.
+   */
+  private async syncReportedLocation(
+    device: AuthenticatedDevice,
+    location: ReportedLocation,
+    mfy: string | undefined,
   ): Promise<void> {
-    this.warnRejectedProfile(device.deviceId, profile);
-
     const changes: Partial<
-      Pick<Device, 'reportedMfy' | 'reportedInstitution' | 'reportedObjectType'>
+      Pick<
+        Device,
+        | 'reportedDistrict'
+        | 'reportedObjectType'
+        | 'reportedInstitution'
+        | 'reportedMfy'
+      >
     > = {};
-    if (profile.mfy !== undefined && profile.mfy !== device.reportedMfy) {
-      changes.reportedMfy = profile.mfy;
-    }
+    const districtKey = location.district?.key;
+    if (districtKey && districtKey !== device.reportedDistrict)
+      changes.reportedDistrict = districtKey;
+    const typeCode = location.objectType?.code;
+    if (typeCode && typeCode !== device.reportedObjectType)
+      changes.reportedObjectType = typeCode;
     if (
-      profile.institution !== undefined &&
-      profile.institution !== device.reportedInstitution
-    ) {
-      changes.reportedInstitution = profile.institution;
-    }
-    if (
-      profile.objectType !== undefined &&
-      profile.objectType !== device.reportedObjectType
-    ) {
-      changes.reportedObjectType = profile.objectType;
-    }
-    if (Object.keys(changes).length === 0) return;
+      location.institution &&
+      location.institution !== device.reportedInstitution
+    )
+      changes.reportedInstitution = location.institution;
+    if (mfy !== undefined && mfy !== device.reportedMfy)
+      changes.reportedMfy = mfy;
 
-    try {
-      await this.devices.update(device.id, changes);
-      Object.assign(device, changes);
-    } catch (error) {
+    const changed = Object.keys(changes).length > 0;
+    if (changed) {
+      try {
+        await this.devices.update(device.id, changes);
+        Object.assign(device, changes);
+      } catch (error) {
+        this.logger.warn(
+          `Qurilma ${device.deviceId}: joylashuv yozilmadi — ` +
+            (error instanceof Error ? error.message : String(error)),
+        );
+        return;
+      }
+    }
+
+    if (!districtKey && !typeCode && !location.institution) return;
+    const nowMs = Date.now();
+    const last = this.locationCheckedAt.get(device.id);
+    if (
+      !changed &&
+      last !== undefined &&
+      nowMs - last < PROFILE_WARN_INTERVAL_MS
+    )
+      return;
+    if (this.locationCheckedAt.size > 10_000) this.locationCheckedAt.clear();
+    this.locationCheckedAt.set(device.id, nowMs);
+
+    const panel = await this.panelLocation(device);
+    const mismatches: string[] = [];
+    const suggestions: string[] = [];
+    if (districtKey) {
+      if (!panel.districtKey) suggestions.push(`tuman=${districtKey}`);
+      else if (panel.districtKey !== districtKey)
+        mismatches.push(
+          `tuman: panelda ${panel.districtKey}, platada ${districtKey}`,
+        );
+    }
+    if (typeCode) {
+      if (!panel.objectTypeCode) suggestions.push(`obyekt turi=${typeCode}`);
+      else if (panel.objectTypeCode !== typeCode)
+        mismatches.push(
+          `obyekt turi: panelda ${panel.objectTypeCode}, platada ${typeCode}`,
+        );
+    }
+    if (location.institution) {
+      if (!panel.institutionName) suggestions.push('muassasa');
+      else if (
+        normalizeInstitutionName(panel.institutionName) !==
+        normalizeInstitutionName(location.institution)
+      )
+        mismatches.push('muassasa nomi paneldagidan farq qiladi');
+    }
+    if (mismatches.length > 0) {
       this.logger.warn(
-        `Qurilma ${device.deviceId}: joylashuv yozilmadi — ` +
-          (error instanceof Error ? error.message : String(error)),
+        `Qurilma ${device.deviceId}: plata joylashuvi paneldagidan farq qiladi — ` +
+          `${mismatches.join('; ')}. Panel o‘zgartirilmadi.`,
       );
     }
+    if (suggestions.length > 0 && changed) {
+      this.logger.log(
+        `Qurilma ${device.deviceId}: joylashuv TAKLIFI (${suggestions.join(', ')}) — ` +
+          'panelda tasdiqlash kutilmoqda',
+      );
+    }
+  }
+
+  /**
+   * PANELDAGI JOYLASHUV: kotyolga ulangan bo'lsa — kotyolniki, aks holda
+   * qurilmaning o'z maydonlari (`district_id`, `organization_id`).
+   */
+  private async panelLocation(device: AuthenticatedDevice): Promise<{
+    districtKey: string | null;
+    objectTypeCode: string | null;
+    institutionName: string | null;
+  }> {
+    const row = await this.devices
+      .createQueryBuilder('device')
+      .leftJoin('boilers', 'boiler', 'boiler.id = device.boiler_id')
+      .leftJoin(
+        'organizations',
+        'org',
+        'org.id = COALESCE(boiler.organization_id, device.organization_id)',
+      )
+      .leftJoin('object_types', 'ot', 'ot.id = org.object_type_id')
+      .leftJoin(
+        'districts',
+        'district',
+        'district.id = COALESCE(boiler.district_id, device.district_id)',
+      )
+      .select('district.key', 'districtKey')
+      .addSelect('ot.code', 'objectTypeCode')
+      .addSelect('org.name', 'institutionName')
+      .where('device.id = :id', { id: device.id })
+      .getRawOne<{
+        districtKey: string | null;
+        objectTypeCode: string | null;
+        institutionName: string | null;
+      }>();
+    return {
+      districtKey: row?.districtKey ?? null,
+      objectTypeCode: row?.objectTypeCode ?? null,
+      institutionName: row?.institutionName ?? null,
+    };
   }
 
   /**
@@ -810,9 +729,14 @@ export class TelemetryService {
   private warnRejectedProfile(
     deviceId: string,
     profile: ReportedProfile,
+    unknownKeys: string[] = [],
   ): void {
-    if (profile.rejected.length === 0) return;
-    const fields = profile.rejected.map((item) => item.field).join(', ');
+    const names = [
+      ...profile.rejected.map((item) => item.field),
+      ...unknownKeys.map((field) => `${field} (noma‘lum kalit)`),
+    ];
+    if (names.length === 0) return;
+    const fields = names.join(', ');
     const key = `${deviceId}|${fields}`;
     const now = Date.now();
     const last = this.profileWarnedAt.get(key);
@@ -852,54 +776,6 @@ export class TelemetryService {
     this.logger.warn(
       `Qurilma ${deviceId}: xona qiymatlari rad etildi — ${detail}${more}`,
     );
-  }
-
-  /**
-   * QURILMA AYTGAN O'LCHOV VAQTINI TEKSHIRISH.
-   *
-   * ⚠️⚠️ CHEGARADAN CHIQQAN VAQT O'LCHOVNI RAD ETMAYDI, faqat
-   * E'TIBORSIZ qoldiriladi va server vaqti ishlatiladi. Sabab:
-   * ESP32 da real-time soat YO'Q. NTP ishlamasa, qurilma 1970-yilni
-   * ko'rsatadi — lekin HARORAT YAROQLI. Yaxshi o'lchovni buzuq soat
-   * uchun tashlab yuborish ma'lumotni behuda yo'qotardi.
-   *
-   * ⚠️ Qaytgan `null` IKKINCHI vazifani ham bajaradi: `measured_at`
-   * yozilmasa, takrorlanishdan himoya qiluvchi qisman unique indeks
-   * bu qatorga TEGMAYDI — va bu to'g'ri, chunki ishonchsiz vaqt
-   * bo'yicha takrorni aniqlab bo'lmaydi.
-   */
-  private resolveMeasuredAt(
-    raw: string | undefined,
-    now: Date,
-    deviceId: string,
-  ): Date | null {
-    if (!raw) return null;
-
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) {
-      this.logger.warn(`Qurilma ${deviceId}: o‘lchov vaqti o‘qilmadi (${raw})`);
-      return null;
-    }
-
-    const drift = parsed.getTime() - now.getTime();
-
-    if (drift > MEASURED_AT_MAX_FUTURE_MS) {
-      this.logger.warn(
-        `Qurilma ${deviceId}: o‘lchov vaqti KELAJAKDA ` +
-          `(${Math.round(drift / 60_000)} daqiqa) — server vaqti ishlatiladi`,
-      );
-      return null;
-    }
-
-    if (-drift > MEASURED_AT_MAX_AGE_MS) {
-      this.logger.warn(
-        `Qurilma ${deviceId}: o‘lchov vaqti 24 soatdan eski ` +
-          `(${Math.round(-drift / 3_600_000)} soat) — server vaqti ishlatiladi`,
-      );
-      return null;
-    }
-
-    return parsed;
   }
 
   /**
@@ -1171,12 +1047,87 @@ export class TelemetryService {
   }
 
   /** Bitta kotyolning oxirgi o'lchovlari — jadval ko'rinishi uchun. */
-  async recent(boilerId: string, limit: number): Promise<TelemetryReading[]> {
+  async recent(
+    boilerId: string,
+    limit: number,
+    user?: AuthUser,
+  ): Promise<TelemetryReading[]> {
+    /*
+     * ⚠️⚠️ TUMAN CHEGARASI — ilgari bu yerda YO'Q edi: tuman mas'uli
+     * boshqa tuman kotyolining o'lchovlarini ID orqali o'qiy olardi.
+     */
+    if (user?.role === UserRole.OPERATOR) {
+      const boiler = await this.boilers.findOne({
+        where: { id: boilerId },
+        select: { id: true, districtId: true },
+      });
+      if (!boiler || boiler.districtId !== user.districtId) {
+        throw new NotFoundException('Kotyol topilmadi');
+      }
+    }
     return this.readings.find({
       where: { boilerId },
       order: { recordedAt: 'DESC' },
       take: Math.min(limit, 500),
     });
+  }
+
+  /**
+   * QURILMA GRAFIGI — `device_id` bo'yicha (kotyolga ulanmagan modul ham).
+   *
+   *   • kotyol moduli: `inlet` va `outlet` chiziqlari. Yakka datchik
+   *     o'lchovi (`probe: inlet|outlet`) O'Z chizig'iga tushadi — ikkinchisi
+   *     bu nuqtada bo'sh (nol emas);
+   *   • xona moduli: `room` (va bo'lsa `humidity`).
+   *
+   * ⚠️ `AVG` NULL larni o'tkazib yuboradi — aynan kerakli xatti-harakat.
+   * ⚠️ Ko'rinish chegarasini CHAQIRUVCHI tekshiradi (`findOneVisible`).
+   */
+  async deviceSeries(
+    deviceUuid: string,
+    query: TelemetryQueryDto,
+  ): Promise<DeviceSeriesPoint[]> {
+    const { from, to } = this.resolveRange(query);
+    const outlet = `COALESCE(reading.outlet_temperature,
+        CASE WHEN reading.probe IS DISTINCT FROM 'inlet' THEN reading.temperature END)`;
+    const qb = this.readings.createQueryBuilder('reading');
+
+    if (query.bucket === 'raw') {
+      qb.select('reading.recorded_at', 't')
+        .addSelect('reading.inlet_temperature', 'inlet')
+        .addSelect(outlet, 'outlet')
+        .addSelect('reading.room_temperature', 'room')
+        .addSelect('reading.humidity', 'humidity')
+        .addSelect('1', 'count')
+        .orderBy('reading.recorded_at', 'ASC');
+    } else {
+      const unit = query.bucket === 'day' ? 'day' : 'hour';
+      qb.select(`date_trunc('${unit}', reading.recorded_at)`, 't')
+        .addSelect('AVG(reading.inlet_temperature)', 'inlet')
+        .addSelect(`AVG(${outlet})`, 'outlet')
+        .addSelect('AVG(reading.room_temperature)', 'room')
+        .addSelect('AVG(reading.humidity)', 'humidity')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('1')
+        .orderBy('1', 'ASC');
+    }
+    qb.where('reading.device_id = :deviceUuid', { deviceUuid })
+      .andWhere('reading.recorded_at BETWEEN :from AND :to', { from, to })
+      .limit(query.limit);
+
+    const rows = await qb.getRawMany<Record<string, unknown>>();
+    const num = (value: unknown): number | null =>
+      value === null || value === undefined
+        ? null
+        : Math.round(Number(value) * 100) / 100;
+    return rows.map((row) => ({
+      t: new Date(row.t as string).toISOString(),
+      inlet: num(row.inlet),
+      outlet: num(row.outlet),
+      room: num(row.room),
+      humidity: num(row.humidity),
+      count: Number(row.count ?? 0),
+    }));
   }
 
   /**
@@ -1233,6 +1184,8 @@ export class TelemetryService {
         boilerId: query.boilerId,
       });
     }
+    // ⚠️ Faqat KOTYOL o'lchovlari: xona moduli qatorida `probe` — `null`.
+    qb.andWhere('reading.probe IS NOT NULL');
     /*
      * ⚠️ Tuman bo'yicha filtr KOTYOLGA JOIN qilishni talab qiladi va
      * u faqat KERAK BO'LGANDA qo'shiladi: har so'rovda qotirib
@@ -1278,20 +1231,4 @@ export class TelemetryService {
       inletAvg: num(row.inletAvg),
     };
   }
-}
-
-/**
- * Plata yuborgan xom tuman qiymati — saqlash va jurnal uchun.
- *
- * ⚠️ Boshqaruv belgilari olib tashlanadi (jurnalda soxta qator
- * yasalmasin) va 64 belgigacha qisqartiriladi (ustun hajmi).
- */
-function sanitizeReported(raw: unknown): string | null {
-  const text =
-    typeof raw === 'string' || typeof raw === 'number' ? String(raw) : '';
-  const clean = text
-    .replace(/[\u0000-\u001f\u007f]/g, '')
-    .trim()
-    .slice(0, 64);
-  return clean || null;
 }

@@ -20,10 +20,11 @@
  * qayta yoqilgan plata viloyat bo'yicha «o'rtacha xona harorati»ni
  * ko'tarib, yolg'on «xona issiq» ogohlantirishini ochardi.
  *
- * 70 °C — qozonxona xonasidagi havo uchun ham yetarli zaxira.
+ * 80 °C — spetsifikatsiyadagi xona moduli oralig'i (-40…80 °C, §4); 85 (DS18B20
+ * «hali o'lchamagan» qiymati) baribir rad etiladi.
  */
 export const AIR_MIN_C = -40;
-export const AIR_MAX_C = 70;
+export const AIR_MAX_C = 80;
 
 /**
  * BITTA YUKDAGI XONALAR CHEGARASI.

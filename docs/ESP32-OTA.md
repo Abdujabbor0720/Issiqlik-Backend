@@ -211,18 +211,34 @@ ishlatilmaydi.
 
 ## 1. Qurilmani ro'yxatga olish va token berish
 
-### Oddiy yo'l (tavsiya etiladi)
+### «Yangi qurilmalar» — bir bosishda ro'yxatga olish (asosiy yo'l)
 
-1. Montajchi platani o'rnatadi, Wi-Fi'ni sozlaydi. Qurilma serverga
-   uriladi va **403** oladi — ma'lumot yozilmaydi.
-2. Kabinet → **ESP32 modullari**. Tepada sariq panel chiqadi:
-   «N ta notanish qurilma ulanishga urinmoqda», identifikatori bilan
-   (`esp32-f42dc987e788`).
-3. «Nusxa» tugmasi bilan identifikatorni oling → **Yangi modul** →
-   identifikatorni qo'ying, kotyolni biriktiring → saqlang.
-4. Tizim **tokenni BIR MARTA ko'rsatadi**. Uni nusxalab oling —
-   keyin uni tizimdan o'qib bo'lmaydi (bazada faqat SHA-256 hash).
-5. Kutish ro'yxatidagi so'rov **o'z-o'zidan yopiladi**.
+1. Montajchi platani o'rnatadi va telefondan sozlash sahifasida Wi-Fi,
+   **tuman**, **obyekt turi** va **muassasa nomini** tanlaydi. Qurilma
+   serverga uriladi va **403** oladi — o'lchov yozilmaydi.
+2. Kabinet → **ESP32 modullari** → «Yangi qurilmalar»: `device_id`,
+   tur (kotyol/xona), plata aytgan tuman / obyekt turi / muassasa, IP va
+   oxirgi vaqt ko'rinadi. Tuman mas'uli faqat o'z tumanini aytganlarini
+   ko'radi (API darajasida).
+3. **«Ro'yxatga olish»** — bitta bosish. Server:
+   * qurilma so'nggi so'rovda yuborgan **o'z tokenini** qabul qiladi
+     (bazada faqat SHA-256 hash) — plata o'zgarishsiz ishlay boshlaydi;
+   * tumanni, obyekt turini va muassasani plata aytganidan oladi
+     (muassasa tuman katalogidan topiladi yoki katalogga qo'shiladi);
+   * istasangiz, ro'yxatga olishda boshqa tuman / muassasa / kotyolni
+     tanlash yoki kalitni qo'lda kiritish mumkin.
+4. Kutish ro'yxatidagi so'rov **o'z-o'zidan yopiladi**.
+
+⚠️ **Avtomatik ro'yxatga olish YO'Q.** Ro'yxatda yo'q `device_id` har doim
+403 oladi — hatto to'g'ri umumiy token bilan ham.
+
+⚠️ Bir xil `device_id` bilan **turli tokenlar** kelsa («token ziddiyati»),
+bir bosishda ro'yxatga olinmaydi: kimdir haqiqiy plata identifikatoridan
+foydalanayotgan bo'lishi mumkin. Bunda kalit qo'lda kiritiladi.
+
+**Qo'lda qo'shish** ham qoladi: **Yangi modul** → identifikator, tur,
+tuman → saqlang. «Mavjud API kalit» maydoni bo'sh qolsa, tizim tokenni
+yaratadi va uni **BIR MARTA ko'rsatadi**.
 
 ### Tokenni qurilmaga yozish
 
@@ -250,50 +266,25 @@ python3 proshivka.py 12-maktab --token
 
 Keyin `tokenlar.csv` dagi tokenni kabinetdagi qurilma kartasiga kiritasiz.
 
-### Ko'p qurilma uchun: avtomatik ro'yxatga olish
+### Ko'p qurilma uchun: umumiy token
 
-⚠️⚠️ Yuzlab plata uchun har biriga qo'lda token yozish amalda
-imkonsiz: montajchi har plata uchun administratorga murojaat qilishi
-kerak bo'lardi va o'rnatish ishi shu yerda to'xtardi.
+Yuzlab plata uchun proshivkaga BITTA umumiy token (`DEVICE_SHARED_TOKEN`)
+qo'yish mumkin. Bunday qurilma ham birinchi so'rovda **403** oladi va
+«Yangi qurilmalar» ga tushadi (token turi — «umumiy»). Ro'yxatga
+olinganda unga umumiy token bilan ishlashga ruxsat beriladi
+(`allow_shared_token`). «Qurilmalar» sahifasidagi «token turi» ustuni
+qaysi qurilma hali umumiy tokenda ekanini ko'rsatadi.
 
-Shuning uchun proshivkaga BITTA umumiy token qo'yiladi va qurilma
-o'zini serverga **o'zi tanitadi**:
-
-1. `.env` da `DEVICE_SHARED_TOKEN` to'ldiriladi
-2. GitHub repozitoriyasida **Settings → Secrets and variables →
-   Actions** ga AYNI qiymat `DEVICE_SHARED_TOKEN` nomi bilan qo'yiladi
-3. Actions → **Proshivka (ESP32)** → *Run workflow* → yangi `.bin`
-   ichida token bo'ladi (repozitoriyada token KO'RINMAYDI)
-4. Montajchi platani yozadi va Wi-Fi'ni sozlaydi — **tamom**
-
-Qurilma birinchi ulanganda server uni o'zi ro'yxatga oladi va
-o'lchovlarini qabul qila boshlaydi.
-
-⚠️⚠️ **KOTYOLGA BIRIKTIRMAYDI** va xavf aynan shu bilan cheklanadi.
-Token sizib chiqsa, begona odam soxta qurilma yarata oladi — lekin
-biriktirilmagan qurilmaning o'lchovi hech qaysi kotyolning holatini,
-xaritasini yoki hisobotini **o'zgartirmaydi**. Eng yomon natija —
-ro'yxatda keraksiz qator.
-
-⚠️ `DEVICE_AUTO_ENROLL_MAX` (sukut 2000) — parkdagi qurilmalar soni
-chegarasi. Busiz tokenni bilgan odam cheksiz soxta qurilma yaratib,
-jadvalni to'ldirib qo'yardi. Chegaraga yetilganda jurnalga xato
-yoziladi.
-
-⚠️ Avtomatik yaratilgan qurilmada `note` maydoni
-«Avtomatik ro'yxatga olindi (umumiy token)» bo'ladi va `boiler_id`
-bo'sh — kabinetdagi «Biriktirilmagan» filtri bilan topiladi.
-
-Mexanizmni o'chirish: `DEVICE_SHARED_TOKEN` ni bo'shatish. Shunda
-eski xatti-harakat qaytadi (403 + kutish ro'yxati).
+⚠️ `DEVICE_AUTO_ENROLL_MAX` endi ishlatilmaydi (eski `.env` da qolsa —
+e'tiborsiz qoldiriladi).
 
 ### Umumiy token haqida
 
 Tizim **faqat shaxsiy tokenlar** bilan ishlaydi: `.env` dagi
 `DEVICE_SHARED_TOKEN` sukut bo'yicha **bo'sh** va mexanizm o'chiq.
 
-Ko'chish davri uchun (Xonobodning 14 qurilmasi hali umumiy tokenda
-bo'lsa) ikkita shart birga kerak:
+Ko'chish davri uchun (eski paneldan ko'chgan qurilmalar hali umumiy
+tokenda bo'lsa) ikkita shart birga kerak:
 
 1. `.env` → `DEVICE_SHARED_TOKEN=<24+ belgi>`;
 2. har bir qurilma uchun **alohida** `devices.allow_shared_token = true`.
@@ -317,16 +308,26 @@ pio run
 # natija: .pio/build/esp32dev/firmware.bin
 ```
 
-Yangi reliz oldidan `firmware/include/config.h` dagi `FW_VERSION` ni
-**oshirish shart**. Server versiyani fayl ichidagi
-`XONOBOD_FW_VERSION=x.y.z;` belgisidan o'qiydi, qo'lda kiritilganidan
-emas.
+Server versiyani va modul turini fayl ICHIDAGI belgilardan o'qiydi
+(kotyol v2.1.0, xona v1.1.0 proshivkasida qotirilgan):
 
-> ⚠️ Belgi nomi tarixiy sababdan `XONOBOD_` bilan boshlanadi
-> (`firmware/src/ota.cpp`). Uni o'zgartirsangiz, **serverdagi
-> `FW_VERSION_MARKER` ni ham** o'zgartirish kerak
-> (`src/database/entities/firmware.entities.ts`) — aks holda yuklash
-> «belgi topilmadi» bilan rad etiladi.
+```
+ANDIJON_FW_VERSION=2.1.0;
+ANDIJON_FW_MODULE=kotyol;      (yoki xona)
+```
+
+* Versiya umumiy ifoda bilan izlanadi: `([A-Z]+)_FW_VERSION=(\d+\.\d+\.\d+);`,
+  `ANDIJON` prefiksi ustun. Eski binarlardagi boshqa prefiksli belgi
+  (masalan v2.0.0 dagi) ham o'qiladi.
+* Tur `ANDIJON_FW_MODULE` belgisidan olinadi. Belgisiz eski faylda turni
+  **yuklovchi qo'lda tanlaydi** — panel taklif qiladi: 2.x → kotyol,
+  1.x → xona. Belgi bor faylda tanlov belgiga zid bo'lsa — rad.
+* Yuklashdan oldin `POST /api/v1/firmware/releases/inspect` faylni
+  saqlamasdan tekshiradi (versiya, belgidagi tur, taklif).
+
+> ⚠️ Repodagi `firmware/` papkasi — ESKI kotyol proshivkasi manbasi
+> (`institution_id`, eski versiya belgisi, `X-Device-Type` yo'q). Yangi
+> proshivkalar (kotyol v2.1.0, xona v1.1.0) alohida yig'iladi.
 
 ### Yuklash
 
@@ -339,9 +340,10 @@ Server quyidagilarni tekshiradi va **bittasi o'tmasa rad etadi**:
 |---|---|
 | birinchi bayt `0xE9` (ESP32 obrazi) | «Bu ESP32 proshivkasi emas» |
 | hajm ≤ 1 966 080 bayt (`min_spiffs` OTA bo'limi) | 413 / «Fayl juda katta» |
-| ichida `XONOBOD_FW_VERSION=x.y.z;` belgisi | «belgi topilmadi» |
+| ichida `ANDIJON_FW_VERSION=x.y.z;` (yoki eski prefiksli) belgi | «versiya belgisi topilmadi» |
+| `ANDIJON_FW_MODULE=kotyol\|xona;` yoki qo'lda tanlangan tur | «turini qo'lda tanlang» / «belgiga zid» |
 | belgidagi versiya kiritilgani bilan mos | «Versiya mos emas: fayl ichida …» |
-| versiya takrorlanmagan | «allaqachon yuklangan» |
+| (tur, versiya) juftligi takrorlanmagan | «allaqachon yuklangan» (409) |
 | aynan shu fayl boshqa raqam bilan yuklanmagan | «Aynan shu fayl … sifatida yuklangan» |
 
 SHA-256 **serverda** hisoblanadi. Fayl web root'dan tashqarida,
@@ -351,15 +353,22 @@ SHA-256 **serverda** hisoblanadi. Fayl web root'dan tashqarida,
 
 ## 3. Tarqatish
 
-### Majburiy tartib: 1 ta qurilma → tuman → viloyat
+### Majburiy tartib: 1 ta qurilma → bosqichlar → hammasi
 
 Kabinet → **Proshivka (OTA)** → relizdagi «Tarqatish» tugmasi.
 
-1. **Kimga**: «Tanlangan qurilmalar» (sinov uchun eng aniq), yoki
-   «Tanlangan tumanlar», «Obyekt turi bo'yicha», «Barcha qurilmalar».
-2. **«Avval faqat 1 ta qurilmada sinab ko'rish»** — sukut bo'yicha
-   YOQILGAN. Uni o'chirmang, to'liq sinovdan o'tmaguncha.
-3. «Boshlash».
+1. **Modul turi** — relizning o'zidan (`kotyol` yoki `xona`) va bu
+   MAJBURIY filtr: kotyol `.bin` hech qachon xona platasiga taklif
+   qilinmaydi (va aksincha).
+2. **Kimga**: «Butun viloyat», «Tanlangan tumanlar», «Obyekt turi
+   bo'yicha» yoki «Tanlangan qurilmalar». Tuman va obyekt turi —
+   qurilmaning amaldagi joylashuvi (kotyolga ulangan bo'lsa kotyolniki,
+   aks holda paneldagi o'z tumani va muassasasi).
+3. **Bosqich**: tarqatish sukut bo'yicha **1 ta qurilmada sinov** bilan
+   boshlanadi (`maxDevices = 1`). Sinov `ok` bilan tasdiqlangach
+   «Keyingi bosqich»: 10 → 50 → cheklovsiz
+   (`PATCH /api/v1/firmware/rollouts/:id/limit`).
+4. «Boshlash».
 
 Qurilmalar **30 daqiqa ichida** yangilanishni oladi (tekshiruv oralig'i
 `config.h` da qotirilgan). Shuning uchun tarqatish 30 daqiqadan ko'proq
@@ -391,8 +400,8 @@ holatiga o'tadi va keyingi versiyani tarqatish mumkin bo'ladi.
   ettirish mumkin;
 - **Bekor qilish** (`cancelled`) — tarixda qoladi, qaytarilmaydi.
 
-Bir vaqtda **faqat bitta** faol tarqatish bo'lishi mumkin (bazada
-kafolatlangan). Yangisini boshlash uchun avvalgisini to'xtatish kerak.
+Bir vaqtda **har modul turi uchun bitta** faol tarqatish bo'lishi mumkin
+(bazada kafolatlangan): kotyol va xona modullari mustaqil yangilanadi.
 
 ### Bloklash — avtomatik himoya
 
@@ -435,239 +444,183 @@ himoya qavati.
 
 ## 5. Kontrakt (proshivkada qotirilgan — o'zgartirilmaydi)
 
-### Barcha so'rovlardagi sarlavhalar
+Kotyol moduli **v2.1.0** va xona moduli **v1.1.0**. Eski qurilmalar
+(kotyol v2.0.0, xona v1.0.0) ham ishlaydi — ular USB yoki OTA orqali
+yangilanguncha ikkala format qabul qilinadi.
+
+### Sarlavhalar (barcha so'rovlarda)
 
 ```
-X-Device-Token:     <token>
-X-Device-Id:        esp32-<12 kichik hex>
+X-Device-Token:     <token>                 (paneldagi «Mavjud API kalit»)
+X-Device-Id:        esp32-<12 kichik hex>   (STA MAC)
 X-Firmware-Version: 2.1.0
+X-Device-Type:      kotyol | xona           (YANGI; eski proshivkada YO'Q)
 ```
+
+`X-Device-Type` bo'lmasa, tur tanadan aniqlanadi: `room_temperature_c`
+bor → `xona`, aks holda `kotyol`. Tur `devices.device_type` ga yoziladi:
+
+* **aytilgan** tur (sarlavha / OTA'dagi `type=`) yoziladi; avvalgisidan
+  farq qilsa — jurnalga ogohlantirish va audit yozuvi;
+* tanadan **xulosa qilingan** tur saqlanganini O'ZGARTIRMAYDI, faqat
+  ogohlantiradi. Sabab: datchigi uzilgan eski xona moduli
+  `room_temperature_c` yubormay qoladi; xulosa yozilsa, keyingi OTA
+  tekshiruvida unga KOTYOL `.bin` taklif qilinardi.
+
+Qurilma faqat HTTPS bilan ishlaydi va redirect'ga ergashmaydi (3xx =
+xato). TLS — Let's Encrypt (ISRG Root X1/X2, YE/YR). Boshqa CA'ga
+o'tilsa qurilmalar ulana olmaydi.
 
 ### Telemetriya
 
-`POST /index.php/api/integrations/telemetry` (va prefikssiz nusxa
-`POST /api/integrations/telemetry`), har 60 soniyada.
+`POST /index.php/api/integrations/telemetry` (prefikssiz nusxa:
+`POST /api/integrations/telemetry`), `Content-Type: application/json`,
+har 60 soniyada.
 
 ```json
-{"institution_id":"12-maktab","device_id":"esp32-f42dc987e788",
- "inlet_temperature_c":45.12,"outlet_temperature_c":60.50}
+{"device_id":"esp32-f42dc987e788","district":"asaka","object_type":"school",
+ "institution_name":"12-maktab","inlet_temperature_c":45.12,"outlet_temperature_c":60.50}
 ```
 
-Yakka datchik ishlaganda:
+Datchikning bittasi ishlamasa: `"temperature_c":60.50,"probe":"outlet"`
+(yoki `"inlet"`). Grafikda bunday o'lchov **o'z chizig'iga** tushadi.
+
+Xona moduli:
 
 ```json
-{"device_id":"esp32-…","temperature_c":60.50,"probe":"outlet"}
+{"device_id":"esp32-b0cbd889a310","district":"asaka","object_type":"school",
+ "institution_name":"12-maktab","room_temperature_c":21.4}
 ```
+
+`"humidity": 45.0` (0…100 %) ham qabul qilinadi va saqlanadi
+(qurilmada oxirgi qiymat + telemetriya qatori).
+
+Qoidalar:
+
+| Qoida | Natija |
+|---|---|
+| `district`, `object_type`, `institution_name` | IXTIYORIY |
+| eski `institution_id` (`maktab-4`) | qabul qilinadi, alohida saqlanadi (nom emas) |
+| noma'lum maydon | **rad etilmaydi** |
+| noma'lum `district` / `object_type` kaliti | **rad etilmaydi**, maydon e'tiborsiz (jurnalda) |
+| `measured_at` | o'qilmaydi — SERVER vaqti |
+| kotyol harorati −55…125 °C dan tashqari | **422** |
+| xona harorati −40…80 °C dan tashqari | **422** |
+| harorat umuman yo'q | **422** |
 
 Javob kodlari — qurilma xatti-harakati shunga bog'liq:
 
-| Kod | Qurilma nima qiladi |
+| Kod | Ma'nosi |
 |---|---|
-| **201 / 200** | qabul qilindi; yangi proshivka aynan shu bilan tasdiqlanadi |
-| **400 / 422** | o'lchovni **tashlab yuboradi** (butunlay yaroqsiz) |
-| **401** | token xato |
-| **403** | qurilma ro'yxatda yo'q (kutish ro'yxatiga tushadi) |
-| **429 / 5xx** | **keyinroq qayta yuboradi** — o'lchov yo'qolmaydi |
+| **201** (`/api/data` da 200) | qabul qilindi; yangi proshivka aynan shu bilan tasdiqlanadi |
+| **400 / 422** | yaroqsiz |
+| **401** | token xato yoki yo'q |
+| **403** | qurilma ro'yxatda yo'q → «Yangi qurilmalar» ro'yxatiga tushadi |
+| **429 / 5xx** | qurilma keyinroq qayta urinadi |
 
-### Tuman — plata menyusida tanlanadi (`district`)
+### Joylashuv — PANELDAN, plata faqat TAKLIF qiladi
 
-Plata kabinetdan hech narsa QABUL QILMAYDI, shuning uchun 16 ta tuman
-proshivkaga qotiriladi. Montajchi sozlash menyusida **nomni** tanlaydi,
-plata har signalda **SOATO kodini** yuboradi:
+Qurilma ↔ muassasa bog'lanishi faqat `device_id` orqali, paneldagi
+qurilmalar jadvalidan olinadi. Plata yuborgan tuman / obyekt turi /
+muassasa nomiga ko'r-ko'rona ishonilmaydi:
 
-```json
-{"device_id":"esp32-f42dc987e788","district":"1703206",
- "institution_id":"12-maktab", "outlet_temperature_c":60.50}
-```
+* panelda shu maydon **bo'sh** bo'lsa — **taklif** sifatida saqlanadi
+  (`devices.reported_*`) va «Qurilmalar» sahifasida «Tasdiqlash»
+  tugmasi bilan ko'rinadi (`POST /api/v1/devices/:id/location/confirm`);
+* panelda **to'la** va farq qilsa — e'tiborsiz qoldiriladi, jurnalga
+  ogohlantirish yoziladi. Panel hech qachon plata qiymati bilan
+  almashtirilmaydi.
 
-| SOATO | Nom | | SOATO | Nom |
+Amaldagi joylashuv: kotyolga ulangan bo'lsa kotyolniki, aks holda
+qurilmaning paneldagi tumani va muassasasi.
+
+### Tumanlar katalogi (kalitlar proshivkada qotirilgan)
+
+| key | nom | | key | nom |
 |---|---|---|---|---|
-| 1703401 | Andijon shahri | | 1703221 | Jalaquduq tumani |
-| 1703405 | Xonobod shahri | | 1703224 | Xo‘jaobod tumani |
-| 1703203 | Andijon tumani | | 1703227 | Qo‘rg‘ontepa tumani |
-| 1703206 | Asaka tumani | | 1703230 | Marhamat tumani |
-| 1703209 | Baliqchi tumani | | 1703233 | Oltinko‘l tumani |
-| 1703212 | Bo‘ston tumani | | 1703236 | Paxtaobod tumani |
-| 1703215 | Buloqboshi tumani | | 1703239 | Ulug‘nor tumani |
-| 1703218 | Izboskan tumani | | 1703242 | Shahrixon tumani |
+| `andijon-sh` | Andijon shahri | | `jalaquduq` | Jalaquduq tumani |
+| `xonobod-sh` | Xonobod shahri | | `xojaobod` | Xo'jaobod tumani |
+| `andijon` | Andijon tumani | | `qorgontepa` | Qo'rg'ontepa tumani |
+| `asaka` | Asaka tumani | | `marhamat` | Marhamat tumani |
+| `baliqchi` | Baliqchi tumani | | `oltinkol` | Oltinko'l tumani |
+| `boz` | Bo'ston tumani | | `paxtaobod` | Paxtaobod tumani |
+| `buloqboshi` | Buloqboshi tumani | | `shahrixon` | Shahrixon tumani |
+| `izboskan` | Izboskan tumani | | `ulugnor` | Ulug'nor tumani |
 
-Server qoidalari (biznes qarori, 2026-11-14):
+Bazada `districts.key` (noyob). Eski xona proshivkasining `boston`
+kaliti `boz` deb qabul qilinadi. **Obyekt turlari**: `school`,
+`kindergarten`, `college`, `clinic`, `hospital`, `admin`,
+`residential`, `other` («Kataloglar → Obyekt turlari»).
 
-- **Tuman kabinetda O'ZGARTIRILMAYDI** — faqat plata menyusida.
-- Modul faqat **o'z tumanidagi** kotyolga biriktiriladi.
-- Biriktirilmagan modulni faqat **o'sha tuman mas'uli** (va admin) ko'radi.
-- Plata qayta sozlanib **boshqa tuman** yuborsa, eski tumandagi kotyoldan
-  **avtomatik ajratiladi** (audit jurnaliga yoziladi) va yangi tumanning
-  «Biriktirilmagan» ro'yxatiga tushadi.
-- **Noma'lum kod** (masalan `9999999`) tumanni o'zgartirMAYDI; kabinetda
-  «noma'lum: 9999999» deb ko'rinadi. So'rov rad etilmaydi.
-- Tizim kodi (`asaka`) va to'liq nom (`Asaka tumani`, tutuq belgisi har
-  xil bo'lsa ham) ham qabul qilinadi, lekin **asosiy shakl — SOATO**.
-  Qisqa nom («Andijon») qabul qilinMAYDI: shahar bilan tuman adashadi.
-- Xona moduli proshivkasining kalitlari ham qabul qilinadi (aniq ro'yxat,
-  §5.1): `andijon-sh`, `xonobod-sh`, `boston` va tizim kodi bilan bir xil
-  bo'lgan qolgan 13 tasi.
-- `district` yubormaydigan eski proshivka o'zgarishsiz ishlaydi; uning
-  tumani biriktirilgan kotyoldan olinadi, biriktirilmaganini faqat admin
-  ko'radi.
+### Xonalar massivi (kotyol modulining qo'shimcha datchiklari)
 
-`institution_id` — erkin matn (`[A-Za-z0-9 ._-]`, 64 belgigacha), FAQAT
-eslatma: qidiruvda yordam beradi, hech narsani yo'naltirmaydi. Haqiqiy
-muassasa — kabinetda biriktirilgan kotyolniki va istalgan vaqtda
-o'zgartiriladi.
+`"rooms":[{"key":"28ff4a2b1c000042","t":21.4}, …]` — har `key` alohida
+xona bo'lib avtomatik yaratiladi (faqat kotyolga ulangan modulda).
+Massivdagi bitta yaroqsiz qiymat qolganlarini rad etmaydi.
 
-### Xona (havo) harorati — QO'SHIMCHA maydon
+### OTA
 
-Server tayyor. Proshivkaga qo'shilishi kerak bo'lgan YAGONA narsa — xuddi
-shu telemetriya so'roviga `rooms` massivi:
+```
+GET  {OTA_URL}?a=check&device_id=esp32-…&version=2.1.0&type=kotyol&inst=12-maktab
+GET  {OTA_URL}?a=download&v=2.1.1
+POST {OTA_URL}?a=report
+```
+
+`OTA_URL` = `https://issiqlik-api.yaxshihayot.uz/ota/index.php`.
+
+* `type` — YANGI. Bo'lmasa (eski proshivka) `devices.device_type` olinadi.
+* `inst` — URL-encoded erkin matn, identifikator sifatida ISHLATILMAYDI.
+* **Proshivka faqat O'Z turidagi qurilmaga** taklif qilinadi va beriladi.
+* Har so'rovda `firmware_version`, `device_type`, `last_check_at`,
+  `last_ip` yangilanadi.
+
+`check` javobi — tekis JSON, `\uXXXX` siz va `/` ekranlanmagan:
 
 ```json
-{"device_id":"esp32-f42dc987e788",
- "inlet_temperature_c":45.12,"outlet_temperature_c":60.50,
- "rooms":[{"key":"28ff4a2b1c000042","t":21.4},
-          {"key":"28ff7d9e03000031","t":18.9}]}
+{"update":false}
+{"update":true,"version":"2.1.1","url":"https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=download&v=2.1.1","sha256":"<64 hex>","size":1146012}
 ```
 
-| Maydon | Ma'nosi |
-|---|---|
-| `key` | Datchikning **doimiy** identifikatori. Eng yaxshisi — DS18B20 ning 64-bitli manzili (hex). Katta-kichik harf farq qilmaydi. Ruxsat: `a-z 0-9 . _ : -`, 64 belgigacha |
-| `t` | Havo harorati, °C. Son yoki satr (`"21.4"`) |
+`url` aynan `PUBLIC_BASE_URL` (`https://issiqlik-api.yaxshihayot.uz`)
+bilan boshlanadi va ichida `@` bo'lmaydi — server buni har javobda
+tekshiradi, ishlab chiqarishda esa `PUBLIC_BASE_URL` ishga tushishda
+tekshiriladi.
 
-Qoidalar — proshivka shularga tayanishi mumkin:
+`download`: `200`, `Content-Type: application/octet-stream`,
+`Content-Length` **aynan** `size`, gzip / chunked / redirect yo'q.
+`.bin` fayllar `FIRMWARE_DIR` da — web root'dan tashqarida.
 
-- **Xonalarni kabinetda oldindan yaratish SHART EMAS.** Noma'lum `key`
-  kelsa, xona o'zi «Xona N» bo'lib paydo bo'ladi; tuman mas'uli keyin uni
-  «1-sinf» deb nomlaydi. Kalit o'zgarmasa, nom va tarix saqlanadi —
-  plata almashtirilsa ham (datchiklar o'sha joyda qolsa).
-- **Bitta havo datchigi bo'lsa** massiv shart emas:
-  `"room_temperature_c": 21.4` ham qabul qilinadi (kalit — qurilma
-  identifikatori: bitta binodagi har bir modul alohida xona).
-- **Diapazon −40…70 °C.** Undan tashqarisi (jumladan DS18B20 ning `85` va
-  `-127` nosozlik qiymatlari) **jim tashlanadi** — so'rov rad etilMAYDI,
-  kotyol harorati baribir yoziladi.
-- **Buzuq xona qismi so'rovni buzmaydi.** Xona yuki — qo'shimcha
-  ma'lumot; javob kodi faqat kotyol harorati bo'yicha (yuqoridagi jadval).
-- Quvur datchiklari umuman ishlamasa-yu, xonalar kelsa — **201**
-  (`status: null`). Plata faqat xonalar uchun ham o'rnatilishi mumkin.
-- Bitta so'rovda **32 xonagacha**, bitta binoda **64 xonagacha**.
-- Xona yozuvi faqat **kotyolga biriktirilgan** qurilmada yaratiladi
-  (xona binoga tegishli). Biriktirilmagan qurilmaning xona harorati ham
-  **201** bilan qabul qilinadi va qurilmaning o'zida («ESP32 modullari»)
-  ko'rinadi; biriktirilgandan keyingi birinchi signalda xonalar o'zi
-  paydo bo'ladi.
-- Eski proshivka (`rooms` siz) **o'zgarishsiz ishlayveradi**.
-
-### 5.1. Xona harorati moduli (ESP32 + DHT22)
-
-Kotyol (suv) datchigi YO'Q — faqat xona havosi. Manzil, sarlavhalar va
-javob kodlari qozonxona moduli bilan AYNI; qo'shimcha sarlavha:
-
-```
-X-Module-Type: room
-```
-
-Har 60 soniyada:
-
-```json
-{"device_id":"esp32-0070077c641c","district":"asaka","mfy":"Baraka",
- "institution_name":"12-maktab","object_type":"school",
- "room_temperature_c":24.40,"humidity":45.2}
-```
-
-| Maydon | Majburiy | Qoida |
-|---|---|---|
-| `room_temperature_c` | ha* | −40…70 °C. Kalit — qurilma identifikatori: bitta binodagi har bir modul ALOHIDA xona |
-| `district` | yo'q | §5 jadvali yoki proshivka kaliti (`andijon-sh`, `xonobod-sh`, `boston`, …) |
-| `mfy` | yo'q | UTF-8 matn, 120 belgigacha |
-| `institution_name` | yo'q | Erkin matn, 120 belgigacha |
-| `object_type` | yo'q | Katalog kaliti: `school`, `kindergarten`, `college`, `clinic`, `hospital`, `admin`, `residential`, `other` |
-| `humidity` | yo'q | 0…100 %. Qurilmada oxirgi qiymat saqlanadi |
-| `module_type` | yo'q | `room` — sarlavha bo'lmasa zaxira |
-
-\* yoki `rooms` massivi. Javoblar:
-
-| Holat | Javob |
-|---|---|
-| Xona harorati bor (`temperature_c` yo'q) | **201**, `status: null`. Kotyol o'lchovi YARATILMAYDI |
-| Kotyol harorati ham, xona harorati ham yo'q | **422** «Harorat yuborilmagan» |
-| Xona harorati diapazondan tashqarida | **422** «Xona harorati … diapazonidan tashqarida» |
-
-Server qoidalari:
-
-- **Joylashuv maydonlari faqat ko'rsatish uchun** (`institution_id` bilan
-  AYNI doktrina). Kelgan qiymat oxirgisini yangilaydi, kelmagani
-  o'chirilmaydi. Yaroqsiz qiymat (masalan `object_type: "maktab 1"`) jim
-  e'tiborsiz qoldiriladi — so'rov rad etilmaydi.
-- **Modul turi**: sarlavha/`module_type` ustun. Aytilmasa — yukdan: suv
-  harorati umuman yo'q, xona harorati bor → `room`. Kotyolga ulangan
-  qurilmada tur faqat plata aytganda o'zgaradi.
-- **Bitta kotyolga bitta QOZONXONA moduli**, xona modullari esa bir nechta
-  bo'lishi mumkin (har sinfga bittadan). Xona moduli kotyol holatiga
-  tegmaydi; qozonxona moduli bo'lmasa, kotyol hamon «modulsiz».
-- MFY ro'yxati (878 ta) serverda hozircha TEKSHIRILMAYDI — matn
-  saqlanadi va ko'rsatiladi.
-
-### OTA — modul turlari AJRATILGAN
-
-Relizning turi `.bin` ICHIDAGI belgidan aniqlanadi:
-
-| Belgi | Tur |
-|---|---|
-| `XONOBOD_FW_VERSION=x.y.z;` | qozonxona moduli (o'zgarmaydi) |
-| `XONA_FW_VERSION=x.y.z;` | xona moduli |
-
-- Reliz faqat O'Z turidagi qurilmaga taklif qilinadi va beriladi;
-  boshqa turdagi faylni so'rasa — `404`.
-- Ikkala belgi bitta faylda bo'lsa — yuklash RAD etiladi.
-- Versiya har tur ichida yagona (xona 1.x va qozonxona 2.x mustaqil).
-  Har tur uchun bir vaqtda bittadan faol tarqatish.
-- Xona moduli `X-Module-Type: room` ni **barcha** so'rovlarda (telemetriya,
-  `check`, `download`, `report`) yuborishi kerak: shunda birinchi so'rov
-  OTA tekshiruvi bo'lsa ham tur aniq bo'ladi.
-
-```
-GET  /ota/index.php?a=check&device_id=…&version=…&inst=…
-GET  /ota/index.php?a=download&v=2.1.0
-POST /ota/index.php?a=report
-```
-
-`check` javobi **tekis** obyekt bo'lishi shart (ichma-ich obyekt yoki
-`\uXXXX` bo'lmasin — proshivkadagi JSON o'quvchi juda sodda):
-
-```json
-{"update":true,"version":"2.1.0",
- "url":"https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=download&v=2.1.0",
- "sha256":"<64 kichik hex>","size":1146012}
-```
-
-`download` javobi: `200`, `Content-Type: application/octet-stream`,
-`Content-Length` **aynan** `size` ga teng, gzip yo'q, chunked yo'q,
-redirect yo'q.
-
----
+`report` tanasi:
+`{"device_id","version","institution_id","status","target","message"}`;
+`institution_id` endi muassasa NOMI (erkin matn). Holatlar:
+`installed | ok | failed | rolled_back`. Javob — `200 {"ok":true}`.
 
 ## 6. Tekshirish (`curl`)
 
 ```bash
 TOKEN=<qurilma tokeni>
 DEV=esp32-f42dc987e788
-H=(-H "X-Device-Token: $TOKEN" -H "X-Device-Id: $DEV" -H "X-Firmware-Version: 2.1.0")
+H=(-H "X-Device-Token: $TOKEN" -H "X-Device-Id: $DEV" -H "X-Firmware-Version: 2.1.0" -H "X-Device-Type: kotyol")
 
 # 201 bo'lishi kerak (noma'lum maydon RAD ETILMAYDI)
 curl -i -X POST https://issiqlik-api.yaxshihayot.uz/index.php/api/integrations/telemetry \
   -H "Content-Type: application/json" "${H[@]}" \
-  -d '{"device_id":"'$DEV'","temperature_c":60.5,"probe":"outlet","extra":1}'
+  -d '{"device_id":"'$DEV'","district":"asaka","object_type":"school","institution_name":"12-maktab","temperature_c":60.5,"probe":"outlet","extra":1}'
 
 # {"update":false} yoki {"update":true,...}
-curl -s "https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=check&device_id=$DEV&version=2.1.0" "${H[@]}"
+curl -s "https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=check&device_id=$DEV&version=2.1.0&type=kotyol&inst=12-maktab" "${H[@]}"
 
 # Content-Length = size, chunked va gzip YO'Q
 curl -sI "https://issiqlik-api.yaxshihayot.uz/ota/index.php?a=download&v=2.1.0" "${H[@]}"
 ```
 
-Kutilgan natijalar: tokensiz → **401**; begona `device_id` → **403**;
-`probe` va noma'lum maydon → **201**; harorat `-127` → **422**;
+Kutilgan natijalar: tokensiz → **401**; begona `device_id` → **403**
+(va «Yangi qurilmalar» da paydo bo'ladi); `probe`, noma'lum maydon yoki
+noma'lum tuman kaliti → **201**; eski format (`institution_id`,
+`X-Device-Type` siz) → **201**; kotyol `130` / xona `85` → **422**;
 `check` javobida `\/` **yo'q**; `download` hajmi aniq.
+
+Avtomatik tekshiruv: `npm run test:e2e` (alohida `issiqlik_e2e` bazasida).
 
 ---
 

@@ -92,7 +92,7 @@ export class BoilerSetupDto {
    *
    * `boiler.organizationId` bilan BIRGA yuborilmaydi.
    */
-  @ApiPropertyOptional({ example: 'Xonobod shahar 4-umumta‘lim maktabi' })
+  @ApiPropertyOptional({ example: '12-maktab' })
   @Transform(trim)
   @IsString()
   @MinLength(2, { message: 'Muassasa nomi juda qisqa' })

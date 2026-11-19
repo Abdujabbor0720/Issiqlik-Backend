@@ -10,6 +10,7 @@ import { AuditAction, BoilerStatus } from '../../common/constants/enums';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { Boiler } from '../../database/entities/boiler.entity';
+import { Organization } from '../../database/entities/catalog.entities';
 import { District } from '../../database/entities/district.entity';
 import {
   applyDistrictScope,
@@ -101,7 +102,7 @@ export class BoilersService {
        * bermaydi: faqat xona moduli ulangan kotyol hamon «modul kerak».
        */
       qb.andWhere(
-        "NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.module_type = 'boiler')",
+        "NOT EXISTS (SELECT 1 FROM devices d WHERE d.boiler_id = boiler.id AND d.device_type = 'kotyol')",
       );
     }
 
@@ -136,6 +137,12 @@ export class BoilersService {
     assertDistrictAccess(actor, dto.districtId);
     await this.assertDistrictExists(dto.districtId);
     if (dto.lotNumber) await this.assertLotFree(dto.lotNumber);
+    if (dto.organizationId) {
+      await this.assertOrganizationInDistrict(
+        dto.organizationId,
+        dto.districtId,
+      );
+    }
 
     return this.repo.create({
       lotNumber: null,
@@ -230,6 +237,21 @@ export class BoilersService {
       if (dto[key] !== undefined) {
         (patch as Record<string, unknown>)[key] = dto[key];
       }
+    }
+
+    const nextOrganizationId =
+      dto.organizationId !== undefined
+        ? dto.organizationId
+        : boiler.organizationId;
+    const nextDistrictId = dto.districtId ?? boiler.districtId;
+    if (
+      nextOrganizationId &&
+      (dto.organizationId !== undefined || dto.districtId !== undefined)
+    ) {
+      await this.assertOrganizationInDistrict(
+        nextOrganizationId,
+        nextDistrictId,
+      );
     }
 
     Object.assign(boiler, patch);
@@ -340,7 +362,7 @@ export class BoilersService {
         'device.name',
         'device.isActive',
         'device.lastSeenAt',
-        'device.moduleType',
+        'device.deviceType',
         'device.lastRoomTemperature',
         'device.lastRoomReadingAt',
       ]);
@@ -357,6 +379,39 @@ export class BoilersService {
     if (exists) {
       throw new BadRequestException(
         `«${lotNumber}» lot raqami allaqachon ro‘yxatda bor`,
+      );
+    }
+  }
+
+  /**
+   * ⚠️⚠️ MUASSASA KOTYOL TUMANIGA TEGISHLI BO'LISHI SHART: katalog endi
+   * tuman bo'yicha. Tumansiz (tarixiy) yozuv birinchi ishlatilganda shu
+   * tumanga biriktiriladi.
+   */
+  private async assertOrganizationInDistrict(
+    organizationId: string,
+    districtId: string,
+  ): Promise<void> {
+    const district = await this.districts.findOne({
+      where: { id: districtId },
+      select: { id: true, key: true },
+    });
+    const organizations = this.repo.manager.getRepository(Organization);
+    const organization = await organizations.findOne({
+      where: { id: organizationId },
+      select: { id: true, districtKey: true },
+    });
+    if (!organization) throw new BadRequestException('Muassasa topilmadi');
+    if (!district) throw new BadRequestException('Tuman topilmadi');
+    if (organization.districtKey === null) {
+      await organizations.update(organization.id, {
+        districtKey: district.key,
+      });
+      return;
+    }
+    if (organization.districtKey !== district.key) {
+      throw new BadRequestException(
+        'Muassasa boshqa tumanga tegishli — shu tumandagi muassasani tanlang',
       );
     }
   }

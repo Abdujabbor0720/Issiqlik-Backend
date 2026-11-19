@@ -122,15 +122,26 @@ export const validationSchema = Joi.object({
    */
   PUBLIC_BASE_URL: Joi.string()
     .uri({ scheme: ['http', 'https'] })
+    // ⚠️ `@` bo'lsa qurilma havolani rad etadi (net.cpp: isOwnServerUrl).
+    .pattern(/@/, { invert: true })
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.string()
+        .pattern(/^https:\/\/[^/@\s]+\/?$/)
+        .messages({
+          'string.pattern.base':
+            'PUBLIC_BASE_URL ishlab chiqarishda https://<domen> ko‘rinishida bo‘lishi shart ' +
+            '(qurilma OTA havolasini faqat shu bilan qabul qiladi)',
+        }),
+    })
     .default('http://localhost:3000'),
 
   /*
-   * ⚠️ Avtomatik ro'yxatga olingan qurilmalar soni chegarasi.
-   *    Parkdan sezilarli katta qo'yilsa, chegara ma'nosini
-   *    yo'qotadi; juda kichik qo'yilsa, haqiqiy qurilmalar
-   *    ro'yxatga tusha olmay qoladi.
+   * ⚠️ AVTOMATIK RO'YXATGA OLISH OLIB TASHLANGAN: noma'lum qurilma har doim
+   * 403 oladi va «Yangi qurilmalar» ro'yxatiga tushadi. Eski `.env` dagi
+   * qiymat xato bermasligi uchun qabul qilinadi, lekin ISHLATILMAYDI.
    */
-  DEVICE_AUTO_ENROLL_MAX: Joi.number().min(0).max(100000).default(2000),
+  DEVICE_AUTO_ENROLL_MAX: Joi.any().strip(),
 
   FIRMWARE_DIR: Joi.string().default('./storage/firmware'),
   FIRMWARE_MAX_CONCURRENT: Joi.number().min(1).max(200).default(10),

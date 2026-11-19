@@ -4,6 +4,7 @@ import { Boiler } from './boiler.entity';
 import {
   BoilerBrand,
   Firm,
+  Mahalla,
   ObjectType,
   Organization,
 } from './catalog.entities';
@@ -40,6 +41,7 @@ export const ENTITIES = [
   BoilerBrand,
   Firm,
   ObjectType,
+  Mahalla,
   Organization,
   Boiler,
   Device,
@@ -73,6 +75,7 @@ export {
   FirmwareBlock,
   FirmwareRelease,
   FirmwareRollout,
+  Mahalla,
   ObjectType,
   OtaEvent,
   PendingDevice,
