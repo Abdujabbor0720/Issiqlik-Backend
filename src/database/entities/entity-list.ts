@@ -2,6 +2,7 @@ import { Alert } from './alert.entity';
 import { AuditLog } from './audit-log.entity';
 import { Boiler } from './boiler.entity';
 import {
+  Agency,
   BoilerBrand,
   Firm,
   Mahalla,
@@ -16,9 +17,20 @@ import {
   FirmwareRollout,
   OtaEvent,
 } from './firmware.entities';
+import {
+  EscalationRule,
+  Incident,
+  IncidentEvent,
+  IncidentNotification,
+} from './incident.entities';
+import { MonitoringHoliday, MonitoringSchedule } from './monitoring.entities';
 import { PendingDevice } from './pending-device.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { Region } from './region.entity';
+import {
+  ResponsibleAssignment,
+  ResponsiblePerson,
+} from './responsible.entities';
 import { Room, RoomReading } from './room.entity';
 import { SystemSetting } from './system-setting.entity';
 import { TelemetryReading } from './telemetry-reading.entity';
@@ -36,6 +48,8 @@ import { User } from './user.entity';
 export const ENTITIES = [
   Region,
   District,
+  // ⚠️ `Agency` `User` va `Organization` dan OLDIN: ikkalasi unga `FK` bilan bog'lanadi.
+  Agency,
   User,
   RefreshToken,
   BoilerBrand,
@@ -62,26 +76,44 @@ export const ENTITIES = [
   FirmwareRollout,
   FirmwareBlock,
   OtaEvent,
+  // ─── XAVF qatlami ───
+  ResponsiblePerson,
+  ResponsibleAssignment,
+  MonitoringSchedule,
+  MonitoringHoliday,
+  Incident,
+  IncidentEvent,
+  IncidentNotification,
+  EscalationRule,
 ];
 
 export {
+  Agency,
   Alert,
   AuditLog,
   Boiler,
   BoilerBrand,
   Device,
   District,
+  EscalationRule,
   Firm,
   FirmwareBlock,
   FirmwareRelease,
   FirmwareRollout,
+  Incident,
+  IncidentEvent,
+  IncidentNotification,
   Mahalla,
+  MonitoringHoliday,
+  MonitoringSchedule,
   ObjectType,
   OtaEvent,
   PendingDevice,
   Organization,
   RefreshToken,
   Region,
+  ResponsibleAssignment,
+  ResponsiblePerson,
   Room,
   RoomReading,
   SystemSetting,

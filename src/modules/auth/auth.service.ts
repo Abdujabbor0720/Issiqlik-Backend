@@ -61,8 +61,8 @@ export class AuthService {
      * `select: false` — ya'ni boshqa hech bir so'rovda baza bo'ylab
      * tarqalmaydi va tasodifan javobga tushmaydi.
      *
-     * ⚠️ Login REGISTRGA BOG'LIQ EMAS (`LOWER(...)`): «Issqilik2026» va
-     * «issqilik2026» bitta hisob. Aks holda bosh harfni ko'zda
+     * ⚠️ Login REGISTRGA BOG'LIQ EMAS (`LOWER(...)`): «Masul.Asaka» va
+     * «masul.asaka» bitta hisob. Aks holda bosh harfni ko'zda
      * tutmagan operator «login noto'g'ri» xabarini olardi va buning
      * sababini hech kim topa olmasdi.
      */
@@ -249,6 +249,7 @@ export class AuthService {
       role: user.role,
       fullName: user.fullName,
       districtId: user.districtId,
+      agencyId: user.agencyId,
       permissions: ROLE_PERMISSIONS[user.role] ?? [],
     };
   }

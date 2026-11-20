@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Boiler } from '../../database/entities/boiler.entity';
 import {
+  Agency,
   BoilerBrand,
   Firm,
   Mahalla,
@@ -20,6 +21,7 @@ import { CatalogsService } from './catalogs.service';
       Organization,
       ObjectType,
       Mahalla,
+      Agency,
       Boiler,
     ]),
     GeoModule,

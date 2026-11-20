@@ -20,6 +20,7 @@ export function applyDistrictScope<T extends object>(
   column: string,
 ): SelectQueryBuilder<T> {
   if (!user) return qb;
+  assertNotNarrowRole(user);
   if (user.role !== UserRole.OPERATOR) return qb;
   if (!user.districtId) {
     /*
@@ -42,8 +43,37 @@ export function assertDistrictAccess(
   user: AuthUser | undefined,
   districtId: string | null | undefined,
 ): void {
-  if (!user || user.role !== UserRole.OPERATOR) return;
+  if (!user) return;
+  assertNotNarrowRole(user);
+  if (user.role !== UserRole.OPERATOR) return;
   if (!districtId || districtId !== user.districtId) {
     throw new ForbiddenException('Bu tuman sizga biriktirilmagan');
+  }
+}
+
+/**
+ * TUMAN KESIMINI BILMAYDIGAN ROLLAR — YOPIQ HOLATDA.
+ *
+ * ⚠️⚠️ Bu funksiya «operator bo'lmasa — cheklov yo'q» deb ishlaydi. Yangi
+ * rollar (tashkilot mas'uli, obyekt javobgari) operator EMAS, lekin
+ * viloyat darajasi ham emas: ular uchun `return qb` butun viloyatni
+ * ochib berardi. Ularning ruxsatlari bu endpointlarga yetmaydi
+ * (`permissions.ts`), lekin ruxsat ro'yxati bir kuni kengaytirilsa,
+ * teshik jimgina ochilmasligi kerak — shuning uchun aniq 403.
+ * Ularning kesimi `incident-scope.helper.ts` da.
+ */
+const NARROW_ROLES: readonly UserRole[] = [
+  UserRole.AGENCY_OFFICER,
+  UserRole.RESPONSIBLE,
+];
+
+/** Tashkilot mas'uli yoki obyekt javobgari — tuman kesimidan TASHQARIDAGI rol. */
+export function isNarrowRole(user: AuthUser | undefined): boolean {
+  return !!user && NARROW_ROLES.includes(user.role);
+}
+
+function assertNotNarrowRole(user: AuthUser): void {
+  if (isNarrowRole(user)) {
+    throw new ForbiddenException('Bu bo‘lim sizning vakolatingizga kirmaydi');
   }
 }

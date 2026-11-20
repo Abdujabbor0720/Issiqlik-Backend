@@ -17,6 +17,12 @@ export interface AuthUser {
   role: UserRole;
   permissions: Permission[];
   districtId: string | null;
+  /**
+   * Tashkilot mas'uli (`agency_officer`) uchun — u FAQAT shu idoraga
+   * qarashli muassasalarning XAVF hodisalarini ko'radi
+   * (`incident-scope.helper.ts`). Boshqa rollarda `null`.
+   */
+  agencyId: string | null;
   fullName: string;
 }
 

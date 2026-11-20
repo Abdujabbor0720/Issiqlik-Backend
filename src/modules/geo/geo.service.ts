@@ -12,7 +12,7 @@ import { Boiler } from '../../database/entities/boiler.entity';
 import { District } from '../../database/entities/district.entity';
 import { DistrictDirectoryService } from './district-directory.service';
 import { Region } from '../../database/entities/region.entity';
-import { applyDistrictScope } from '../../helpers/scope.helper';
+import { applyDistrictScope, isNarrowRole } from '../../helpers/scope.helper';
 import { SettingsService } from '../settings/settings.service';
 import type {
   BoilerPoint,
@@ -65,7 +65,14 @@ export class GeoService {
       ])
       .orderBy('district.name', 'ASC');
 
-    applyDistrictScope(qb, user, 'district.id');
+    /*
+     * ⚠️ Tashkilot mas'uli va obyekt javobgari uchun — HAMMA tuman nomlari:
+     * bu ochiq ma'lumot (16 ta nom) va XAVF panelidagi «tuman bo'yicha
+     * filtr» uchun kerak (boshqarma bir nechta tumanni qamraydi). Tuman
+     * kesimi ular uchun YOPIQ ishlaydi (`scope.helper.ts`) va bu yerda
+     * 403 qaytsa, panel filtrsiz qolardi.
+     */
+    if (!isNarrowRole(user)) applyDistrictScope(qb, user, 'district.id');
     return qb.getRawMany();
   }
 

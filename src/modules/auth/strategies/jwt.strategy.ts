@@ -53,6 +53,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         fullName: true,
         role: true,
         districtId: true,
+        agencyId: true,
         isActive: true,
       },
     });
@@ -68,6 +69,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       role: user.role,
       fullName: user.fullName,
       districtId: user.districtId,
+      agencyId: user.agencyId,
       permissions: ROLE_PERMISSIONS[user.role] ?? [],
     };
   }

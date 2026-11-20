@@ -11,6 +11,7 @@ import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { Boiler } from '../../database/entities/boiler.entity';
 import {
+  Agency,
   BoilerBrand,
   Firm,
   Mahalla,
@@ -29,10 +30,15 @@ import type {
 
 /** URL dagi katalog nomi → repozitoriy va kotyoldagi ustun. */
 export type CatalogKind =
-  'brands' | 'firms' | 'organizations' | 'object-types' | 'mahallas';
+  | 'brands'
+  | 'firms'
+  | 'organizations'
+  | 'object-types'
+  | 'mahallas'
+  | 'agencies';
 
 type CatalogEntityUnion =
-  BoilerBrand | Firm | Organization | ObjectType | Mahalla;
+  BoilerBrand | Firm | Organization | ObjectType | Mahalla | Agency;
 
 interface CatalogMeta {
   repo: Repository<CatalogEntityUnion>;
@@ -68,6 +74,7 @@ export class CatalogsService {
     @InjectRepository(Organization) organizations: Repository<Organization>,
     @InjectRepository(ObjectType) objectTypes: Repository<ObjectType>,
     @InjectRepository(Mahalla) mahallas: Repository<Mahalla>,
+    @InjectRepository(Agency) agencies: Repository<Agency>,
     @InjectRepository(Boiler) private readonly boilers: Repository<Boiler>,
     private readonly audit: AuditService,
     private readonly districts: DistrictDirectoryService,
@@ -107,6 +114,11 @@ export class CatalogsService {
             alias: 'mahalla',
             columns: ['mahalla.id', 'mahalla.name'],
           },
+          {
+            property: 'item.agency',
+            alias: 'agency',
+            columns: ['agency.id', 'agency.name'],
+          },
         ],
         districtScoped: true,
         label: 'Muassasa',
@@ -132,6 +144,19 @@ export class CatalogsService {
         districtScoped: true,
         label: 'MFY',
         entityName: 'Mahalla',
+      },
+      /*
+       * ⚠️ TASHKILOT / BOSHQARMA — XAVF shu idora mas'ullariga ham boradi.
+       * Tuman bo'yicha CHEKLANMAYDI (`districtScoped` yo'q): viloyat
+       * boshqarmasi bir nechta tumanni qamraydi va tuman mas'uli ham uni
+       * ro'yxatda ko'rishi kerak.
+       */
+      agencies: {
+        repo: agencies,
+        boilerColumn: null,
+        usedBy: { table: 'organizations', column: 'agency_id' },
+        label: 'Tashkilot',
+        entityName: 'Agency',
       },
     };
   }
@@ -167,6 +192,9 @@ export class CatalogsService {
       if (districtKey) {
         qb.andWhere('item.district_key = :districtKey', { districtKey });
       }
+    }
+    if (kind === 'organizations' && query.agencyId) {
+      qb.andWhere('item.agency_id = :agencyId', { agencyId: query.agencyId });
     }
     if (kind === 'organizations' && query.objectTypeId) {
       qb.andWhere('item.object_type_id = :objectTypeId', {
@@ -314,7 +342,13 @@ export class CatalogsService {
     fields: Record<string, unknown>,
     creating: boolean,
   ): Promise<void> {
-    if (kind !== 'organizations' && kind !== 'mahallas') return;
+    if (
+      kind !== 'organizations' &&
+      kind !== 'mahallas' &&
+      kind !== 'agencies'
+    ) {
+      return;
+    }
     const districtKey = fields.districtKey as string | null | undefined;
     if (kind === 'mahallas' && creating && !districtKey) {
       throw new BadRequestException('MFY uchun tuman tanlanishi shart');
@@ -331,6 +365,13 @@ export class CatalogsService {
       if ((mahalla as Mahalla).districtKey !== districtKey) {
         throw new BadRequestException('MFY muassasa tumaniga tegishli emas');
       }
+    }
+    const agencyId = fields.agencyId as string | null | undefined;
+    if (kind === 'organizations' && agencyId) {
+      const agency = await this.meta.agencies.repo.findOne({
+        where: { id: agencyId },
+      });
+      if (!agency) throw new BadRequestException('Tashkilot topilmadi');
     }
   }
 
@@ -368,6 +409,11 @@ export class CatalogsService {
       if (dto.phone !== undefined) base.phone = dto.phone;
       if (dto.districtKey !== undefined) base.districtKey = dto.districtKey;
       if (dto.mahallaId !== undefined) base.mahallaId = dto.mahallaId;
+      if (dto.agencyId !== undefined) base.agencyId = dto.agencyId;
+    }
+    if (kind === 'agencies') {
+      if (dto.phone !== undefined) base.phone = dto.phone;
+      if (dto.districtKey !== undefined) base.districtKey = dto.districtKey;
     }
     if (kind === 'mahallas') {
       if (dto.districtKey !== undefined) base.districtKey = dto.districtKey;

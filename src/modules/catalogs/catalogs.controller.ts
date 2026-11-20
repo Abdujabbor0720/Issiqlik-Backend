@@ -36,6 +36,7 @@ const KINDS: CatalogKind[] = [
   'organizations',
   'object-types',
   'mahallas',
+  'agencies',
 ];
 
 /**

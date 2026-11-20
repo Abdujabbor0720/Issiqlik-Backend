@@ -12,6 +12,8 @@ import { AuditLog } from '../../database/entities/audit-log.entity';
 
 export interface AuditInput {
   actor?: AuthUser | null;
+  /** Aktyor foydalanuvchi bo'lmaganda (cron, avtomatika) — «Tizim». */
+  actorLabel?: string | null;
   action: AuditAction;
   entityName: string;
   entityId?: string | null;
@@ -52,7 +54,7 @@ export class AuditService {
         userId: input.actor?.id ?? null,
         actorLabel: input.actor
           ? `${input.actor.fullName} (${input.actor.login})`
-          : null,
+          : (input.actorLabel ?? null),
         action: input.action,
         entityName: input.entityName,
         entityId: input.entityId ?? null,

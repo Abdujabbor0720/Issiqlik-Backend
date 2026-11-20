@@ -1,6 +1,7 @@
 import { lotRef } from '../../helpers/boiler-label.helper';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Subject } from 'rxjs';
 import { In, Repository } from 'typeorm';
 import {
   AlertSeverity,
@@ -47,6 +48,20 @@ export interface EvaluateInput {
 export class AlertsService {
   private readonly logger = new Logger(AlertsService.name);
 
+  /**
+   * «SHU OBYEKTDA OGOHLANTIRISH OCHILDI YOKI YOPILDI» — qozonxona `id` si.
+   *
+   * ⚠️⚠️ BIR TOMONLAMA signal: bu servis XAVF qatlami haqida hech narsa
+   * bilmaydi, uni kim tinglashi ham muhim emas. XAVF dvigateli obuna
+   * bo'lib, shu obyektni darhol qayta baholaydi (cron'ni kutmasdan).
+   * Teskari chaqiruv (bu yerdan XAVF servisini chaqirish) telemetriya
+   * oqimini XAVF dagi xatoga bog'lab qo'yardi.
+   *
+   * ⚠️ Faqat HAQIQIY o'zgarishda: sog'lom kotyolning har signalida
+   * yuborilsa, dvigatel sekundiga o'nlab bo'sh baholash qilardi.
+   */
+  readonly changes$ = new Subject<string>();
+
   constructor(
     @InjectRepository(Alert) private readonly repo: Repository<Alert>,
     private readonly settings: SettingsService,
@@ -71,7 +86,8 @@ export class AlertsService {
 
     // Muammo yo'q — ochiq ogohlantirishlar yopiladi.
     if (!type) {
-      await this.resolveOpen(input.boilerId, input.now);
+      const closed = await this.resolveOpen(input.boilerId, input.now);
+      if (closed > 0) this.changes$.next(input.boilerId);
       return;
     }
 
@@ -121,6 +137,7 @@ export class AlertsService {
       message: alert.message,
       at: input.now.toISOString(),
     });
+    this.changes$.next(input.boilerId);
   }
 
   /**
@@ -165,6 +182,7 @@ export class AlertsService {
     const openByRoom = new Map(open.map((alert) => [alert.roomId, alert.id]));
 
     const toResolve: string[] = [];
+    let opened = 0;
 
     for (const room of input.rooms) {
       const existingId = openByRoom.get(room.roomId);
@@ -210,6 +228,7 @@ export class AlertsService {
           message: alert.message,
           at: input.now.toISOString(),
         });
+        opened += 1;
       } catch (error) {
         /*
          * ⚠️ Poyga: parallel so'rov AYNI xona uchun qatorni allaqachon
@@ -226,6 +245,9 @@ export class AlertsService {
         { id: In(toResolve) },
         { state: AlertState.RESOLVED, resolvedAt: input.now },
       );
+    }
+    if (opened > 0 || toResolve.length > 0) {
+      this.changes$.next(input.boilerId);
     }
   }
 
@@ -571,12 +593,15 @@ export class AlertsService {
     }
   }
 
-  /** Ochiq ogohlantirishlarni yopish. `exceptType` — yangi ochilgani. */
+  /**
+   * Ochiq ogohlantirishlarni yopish. `exceptType` — yangi ochilgani.
+   * @returns Yopilgan qatorlar soni.
+   */
   private async resolveOpen(
     boilerId: string,
     now: Date,
     exceptType?: AlertType,
-  ): Promise<void> {
+  ): Promise<number> {
     const qb = this.repo
       .createQueryBuilder()
       .update(Alert)
@@ -594,6 +619,7 @@ export class AlertsService {
       .andWhere('room_id IS NULL');
 
     if (exceptType) qb.andWhere('type <> :exceptType', { exceptType });
-    await qb.execute();
+    const result = await qb.execute();
+    return result.affected ?? 0;
   }
 }

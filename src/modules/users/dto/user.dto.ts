@@ -50,6 +50,14 @@ export class CreateUserDto {
   @IsOptional()
   districtId?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Tashkilot mas‘uli (`agency_officer`) uchun — biriktirilgan tashkilot/boshqarma',
+  })
+  @IsUUID('4')
+  @IsOptional()
+  agencyId?: string;
+
   @ApiPropertyOptional()
   @Transform(trimLower)
   @IsEmail({}, { message: 'Email formati noto‘g‘ri' })
@@ -99,6 +107,11 @@ export class UserQueryDto extends PaginationDto {
   @IsEnum(UserRole)
   @IsOptional()
   role?: UserRole;
+
+  @ApiPropertyOptional()
+  @IsUUID('4')
+  @IsOptional()
+  agencyId?: string;
 
   @ApiPropertyOptional()
   @IsUUID('4')

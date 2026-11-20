@@ -67,6 +67,40 @@ export const PERMISSIONS = {
 
   // Audit jurnali
   AUDIT_VIEW: 'audit.view',
+
+  /*
+   * XAVF (INCIDENT) JARAYONI.
+   *
+   * ⚠️ `ACT` va `CLOSE` AJRATILGAN: javobgar shaxs hodisani qabul qiladi
+   * va «bartaraf etildi» deb belgilaydi, lekin uni YOPA OLMAYDI — yopish
+   * «tekshirildi» degani va u yuqori mas'ulning qarori. Bitta ruxsat
+   * bo'lsa, javobgar o'z ishini o'zi qabul qilib qo'yardi.
+   *
+   * ⚠️ O'CHIRISH ruxsati YO'Q va endpoint ham YO'Q: hodisa tarixi —
+   * mas'uliyat izi.
+   */
+  INCIDENTS_VIEW: 'incidents.view',
+  INCIDENTS_ACT: 'incidents.act',
+  INCIDENTS_CLOSE: 'incidents.close',
+
+  /*
+   * JAVOBGAR SHAXSLAR REYESTRI.
+   *
+   * ⚠️⚠️ `CONTACTS` ALOHIDA: telefon va email — shaxsiy ma'lumot.
+   * Kuzatuvchi kim javobgar ekanini ko'radi, lekin uning raqamini
+   * ko'rmaydi (niqoblangan). Ko'rish huquqi bilan birga raqam ham
+   * tarqalsa, reyestr butun viloyat bo'ylab telefon kitobiga aylanardi.
+   */
+  RESPONSIBLES_VIEW: 'responsibles.view',
+  RESPONSIBLES_MANAGE: 'responsibles.manage',
+  RESPONSIBLES_CONTACTS: 'responsibles.contacts',
+
+  // Monitoring jadvali va bayram kunlari
+  SCHEDULES_VIEW: 'schedules.view',
+  SCHEDULES_MANAGE: 'schedules.manage',
+
+  /** Eskalatsiya muddatlari va qoidalari. */
+  ESCALATION_MANAGE: 'escalation.manage',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -127,6 +161,18 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     PERMISSIONS.USERS_CREATE,
     PERMISSIONS.USERS_UPDATE,
     PERMISSIONS.SETTINGS_VIEW,
+    // XAVF jarayoni — viloyat darajasi.
+    PERMISSIONS.INCIDENTS_VIEW,
+    PERMISSIONS.INCIDENTS_ACT,
+    PERMISSIONS.INCIDENTS_CLOSE,
+    PERMISSIONS.RESPONSIBLES_VIEW,
+    PERMISSIONS.RESPONSIBLES_MANAGE,
+    PERMISSIONS.RESPONSIBLES_CONTACTS,
+    PERMISSIONS.SCHEDULES_VIEW,
+    /* ⚠️ Texnik topshiriq: jadval va eskalatsiya muddatlarini
+       ADMINISTRATOR sozlaydi (tuman mas'uli emas — u faqat ko'radi). */
+    PERMISSIONS.SCHEDULES_MANAGE,
+    PERMISSIONS.ESCALATION_MANAGE,
   ],
 
   /*
@@ -164,6 +210,16 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
        ishi (hokimlikka hisobot). Eksport baribir `applyDistrictScope`
        dan o'tadi, ya'ni boshqa tuman ma'lumoti faylga tushmaydi. */
     PERMISSIONS.REPORTS_EXPORT,
+    /* ⚠️ XAVF — O'Z TUMANI bo'yicha (`incident-scope.helper.ts`). Javobgar
+       shaxslarni ham o'z tumanidagi obyektlarga o'zi biriktiradi: maktab
+       direktorini viloyat emas, tuman biladi. */
+    PERMISSIONS.INCIDENTS_VIEW,
+    PERMISSIONS.INCIDENTS_ACT,
+    PERMISSIONS.INCIDENTS_CLOSE,
+    PERMISSIONS.RESPONSIBLES_VIEW,
+    PERMISSIONS.RESPONSIBLES_MANAGE,
+    PERMISSIONS.RESPONSIBLES_CONTACTS,
+    PERMISSIONS.SCHEDULES_VIEW,
   ],
 
   [UserRole.VIEWER]: [
@@ -174,6 +230,38 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     PERMISSIONS.ALERTS_VIEW,
     PERMISSIONS.CATALOGS_VIEW,
     PERMISSIONS.REPORTS_VIEW,
+    // ⚠️ Kuzatuvchi XAVF va javobgarni ko'radi, TELEFONINI emas (`CONTACTS` yo'q).
+    PERMISSIONS.INCIDENTS_VIEW,
+    PERMISSIONS.RESPONSIBLES_VIEW,
+    PERMISSIONS.SCHEDULES_VIEW,
+  ],
+
+  /*
+   * ⚠️⚠️ TASHKILOT MAS'ULI — FAQAT XAVF JARAYONI. Kotyol, qurilma,
+   * telemetriya, xarita ruxsatlari ATAYLAB berilmagan: o'sha endpointlar
+   * tuman kesimi bilan cheklanadi (`applyDistrictScope`) va tashkilot
+   * kesimini bilmaydi. Ruxsat berilsa, u butun viloyatni ko'rib qolardi.
+   * Hodisa kartasida obyekt, harorat va jadval baribir bor.
+   */
+  [UserRole.AGENCY_OFFICER]: [
+    PERMISSIONS.INCIDENTS_VIEW,
+    PERMISSIONS.INCIDENTS_ACT,
+    PERMISSIONS.INCIDENTS_CLOSE,
+    PERMISSIONS.RESPONSIBLES_VIEW,
+    PERMISSIONS.RESPONSIBLES_CONTACTS,
+    PERMISSIONS.SCHEDULES_VIEW,
+  ],
+
+  /*
+   * ⚠️ OBYEKT JAVOBGARI: qabul qiladi, chora yozadi, «bartaraf etildi»
+   * deydi — lekin YOPMAYDI (`INCIDENTS_CLOSE` yo'q). Boshqa javobgarlarning
+   * telefoni ham ko'rinmaydi (`CONTACTS` yo'q).
+   */
+  [UserRole.RESPONSIBLE]: [
+    PERMISSIONS.INCIDENTS_VIEW,
+    PERMISSIONS.INCIDENTS_ACT,
+    PERMISSIONS.RESPONSIBLES_VIEW,
+    PERMISSIONS.SCHEDULES_VIEW,
   ],
 };
 
@@ -183,4 +271,6 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.ADMIN]: 'Administrator',
   [UserRole.OPERATOR]: 'Tuman mas‘uli',
   [UserRole.VIEWER]: 'Kuzatuvchi',
+  [UserRole.AGENCY_OFFICER]: 'Tashkilot mas‘uli',
+  [UserRole.RESPONSIBLE]: 'Obyekt javobgari',
 };

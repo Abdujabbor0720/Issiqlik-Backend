@@ -85,6 +85,43 @@ export class ObjectType extends CatalogEntity {
 }
 
 /**
+ * TASHKILOT / BOSHQARMA — muassasa QARASHLI bo'lgan idora: «Maktabgacha va
+ * maktab ta'limi boshqarmasi», «Sog'liqni saqlash boshqarmasi», «Baliqchi
+ * tumani MMTB bo'limi».
+ *
+ * ⚠️⚠️ OBYEKT TURI BILAN CHALKASHTIRMANG. Obyekt turi — «bu bino nima»
+ * (maktab), tashkilot esa — «kim javob beradi» (qaysi boshqarmaga
+ * bo'ysunadi). Xususiy maktab ham «maktab», lekin boshqarmaga qarashli
+ * emas; viloyat shifoxonasi esa tuman bo'limiga emas, to'g'ridan-to'g'ri
+ * viloyat boshqarmasiga. Ikkisi bitta ustun bo'lsa, XAVF noto'g'ri idoraga
+ * borardi.
+ *
+ * ⚠️ `districtKey` — ixtiyoriy: `null` — viloyat darajasidagi idora.
+ * XAVF yo'naltirishda tuman MUASSASANING tumanidan olinadi, idoranikidan
+ * emas: viloyat boshqarmasiga qarashli maktab ham o'z tumani mas'uliga
+ * boradi (texnik topshiriq §4: «ikkala yo'nalish ham ishlasin»).
+ */
+@Entity('agencies')
+@Index('UQ_agencies_name', ['name'], { unique: true })
+export class Agency extends CatalogEntity {
+  @Index('IDX_agencies_district_key')
+  @Column({
+    type: 'varchar',
+    length: 32,
+    name: 'district_key',
+    nullable: true,
+  })
+  districtKey!: string | null;
+
+  @ManyToOne(() => District, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'district_key', referencedColumnName: 'key' })
+  district!: District | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  phone!: string | null;
+}
+
+/**
  * MUASSASA (KATALOG YOZUVI) — kotyol O'RNATILGAN obyekt egasi: maktab,
  * bog'cha, shifoxona…
  *
@@ -132,6 +169,22 @@ export class Organization extends CatalogEntity {
 
   @Column({ type: 'varchar', length: 32, nullable: true })
   phone!: string | null;
+
+  /**
+   * QAYSI TASHKILOT / BOSHQARMAGA QARASHLI — XAVF shu idora mas'ullariga
+   * ham boradi (`agency_officer`).
+   *
+   * ⚠️ `null` — bo'ysunuvi aniqlanmagan: XAVF baribir tuman mas'uliga
+   * boradi, lekin «tashkilot mas'uli yo'q» bo'shlig'i hodisa tarixida
+   * yoziladi (jim qolmaydi).
+   */
+  @Index('IDX_organizations_agency_id')
+  @Column({ type: 'uuid', name: 'agency_id', nullable: true })
+  agencyId!: string | null;
+
+  @ManyToOne(() => Agency, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'agency_id' })
+  agency!: Agency | null;
 }
 
 /**

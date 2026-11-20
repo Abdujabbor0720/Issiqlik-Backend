@@ -24,8 +24,11 @@ import { DevicesModule } from './modules/devices/devices.module';
 import { GeoModule } from './modules/geo/geo.module';
 import { OtaModule } from './modules/ota/ota.module';
 import { HealthModule } from './modules/health/health.module';
+import { IncidentsModule } from './modules/incidents/incidents.module';
 import { JobsModule } from './modules/jobs/jobs.module';
+import { MonitoringModule } from './modules/monitoring/monitoring.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { ResponsiblesModule } from './modules/responsibles/responsibles.module';
 import { RoomsModule } from './modules/rooms/rooms.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
@@ -119,6 +122,14 @@ import { UsersModule } from './modules/users/users.module';
      */
     OtaModule,
     DashboardModule,
+    /*
+     * ⚠️ XAVF qatlami — ogohlantirishlar (`AlertsModule`) USTIDA: jadval,
+     * javobgarlar reyestri, hodisa jarayoni va eskalatsiya. U telemetriyaga
+     * tegmaydi — faqat `AlertsService.changes$` ni tinglaydi.
+     */
+    MonitoringModule,
+    ResponsiblesModule,
+    IncidentsModule,
     JobsModule,
     HealthModule,
   ],

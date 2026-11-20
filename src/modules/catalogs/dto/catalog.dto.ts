@@ -91,6 +91,17 @@ export class CreateCatalogItemDto {
   @IsOptional()
   mahallaId?: string | null;
 
+  @ApiPropertyOptional({
+    description:
+      'Faqat muassasa: qaysi tashkilot/boshqarmaga qarashli (XAVF shu idoraga ham boradi)',
+    format: 'uuid',
+  })
+  @Transform(toNullable)
+  @ValidateIf((_object, value) => value !== null)
+  @IsUUID('4')
+  @IsOptional()
+  agencyId?: string | null;
+
   // ── Faqat obyekt turi uchun ──
   @ApiPropertyOptional({
     description: 'Mashina kaliti (`school`, `hospital`) — keyin o‘zgarmaydi',
@@ -137,4 +148,12 @@ export class CatalogQueryDto extends PaginationDto {
   @IsUUID('4')
   @IsOptional()
   objectTypeId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Muassasa: faqat shu tashkilotga qarashlilar',
+    format: 'uuid',
+  })
+  @IsUUID('4')
+  @IsOptional()
+  agencyId?: string;
 }

@@ -2,6 +2,7 @@ import { Exclude } from 'class-transformer';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { UserRole } from '../../common/constants/enums';
 import { BaseEntity } from './base.entity';
+import { Agency } from './catalog.entities';
 import { District } from './district.entity';
 
 /**
@@ -63,6 +64,21 @@ export class User extends BaseEntity {
   @ManyToOne(() => District, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'district_id' })
   district!: District | null;
+
+  /**
+   * TASHKILOT CHEGARASI — faqat `agency_officer` (tashkilot mas'uli) uchun.
+   *
+   * ⚠️ `districtId` bilan BIR XIL doktrina: ruxsat emas, MA'LUMOT
+   * chegarasi. Tashkilot mas'uli FAQAT shu idoraga qarashli muassasalarning
+   * XAVF hodisalarini ko'radi (`incident-scope.helper.ts`).
+   */
+  @Index('IDX_users_agency_id')
+  @Column({ type: 'uuid', name: 'agency_id', nullable: true })
+  agencyId!: string | null;
+
+  @ManyToOne(() => Agency, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'agency_id' })
+  agency!: Agency | null;
 
   @Column({ type: 'boolean', name: 'is_active', default: true })
   isActive!: boolean;

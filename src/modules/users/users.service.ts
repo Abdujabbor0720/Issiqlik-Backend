@@ -16,6 +16,7 @@ import {
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
 import { RefreshToken } from '../../database/entities/refresh-token.entity';
+import { Agency } from '../../database/entities/catalog.entities';
 import { District } from '../../database/entities/district.entity';
 import { User } from '../../database/entities/user.entity';
 import { AuditService } from '../audit/audit.service';
@@ -31,6 +32,8 @@ export class UsersService {
     @InjectRepository(User) private readonly repo: Repository<User>,
     @InjectRepository(District)
     private readonly districts: Repository<District>,
+    @InjectRepository(Agency)
+    private readonly agencies: Repository<Agency>,
     @InjectRepository(RefreshToken)
     private readonly tokens: Repository<RefreshToken>,
     private readonly audit: AuditService,
@@ -41,6 +44,8 @@ export class UsersService {
       .createQueryBuilder('user')
       .leftJoin('user.district', 'district')
       .addSelect(['district.id', 'district.name', 'district.shortName'])
+      .leftJoin('user.agency', 'agency')
+      .addSelect(['agency.id', 'agency.name'])
       .orderBy('user.createdAt', 'DESC')
       .skip(query.skip)
       .take(query.limit);
@@ -57,6 +62,9 @@ export class UsersService {
         districtId: query.districtId,
       });
     }
+    if (query.agencyId) {
+      qb.andWhere('user.agency_id = :agencyId', { agencyId: query.agencyId });
+    }
     if (query.isActive !== undefined) {
       qb.andWhere('user.is_active = :isActive', { isActive: query.isActive });
     }
@@ -68,7 +76,7 @@ export class UsersService {
   async findOne(id: string): Promise<User> {
     const user = await this.repo.findOne({
       where: { id },
-      relations: { district: true },
+      relations: { district: true, agency: true },
     });
     if (!user) throw new NotFoundException('Foydalanuvchi topilmadi');
     return user;
@@ -78,6 +86,7 @@ export class UsersService {
     this.assertCanAssignRole(actor, dto.role);
     await this.assertLoginFree(dto.login);
     this.assertDistrictRule(dto.role, dto.districtId ?? null);
+    await this.assertAgencyRule(dto.role, dto.agencyId ?? null);
 
     const user = this.repo.create({
       login: dto.login,
@@ -85,6 +94,7 @@ export class UsersService {
       fullName: dto.fullName,
       role: dto.role,
       districtId: dto.districtId ?? null,
+      agencyId: dto.agencyId ?? null,
       email: dto.email ?? null,
       phone: dto.phone ?? null,
       position: dto.position ?? null,
@@ -130,6 +140,8 @@ export class UsersService {
     const districtId =
       dto.districtId !== undefined ? dto.districtId : user.districtId;
     this.assertDistrictRule(role, districtId ?? null);
+    const agencyId = dto.agencyId !== undefined ? dto.agencyId : user.agencyId;
+    await this.assertAgencyRule(role, agencyId ?? null);
 
     /*
      * ⚠️ OXIRGI SUPERADMINNI O'CHIRIB BO'LMAYDI va uning rolini
@@ -150,6 +162,7 @@ export class UsersService {
       fullName: dto.fullName ?? user.fullName,
       role,
       districtId: districtId ?? null,
+      agencyId: agencyId ?? null,
       email: dto.email !== undefined ? dto.email : user.email,
       phone: dto.phone !== undefined ? dto.phone : user.phone,
       position: dto.position !== undefined ? dto.position : user.position,
@@ -338,6 +351,31 @@ export class UsersService {
       throw new BadRequestException(
         'Tuman faqat «Tuman operatori» roliga biriktiriladi',
       );
+    }
+  }
+
+  /**
+   * ⚠️ TASHKILOT MAS'ULIGA TASHKILOT MAJBURIY — `assertDistrictRule` bilan
+   * AYNI mantiq: tashkilotsiz `agency_officer` hech qanday XAVF ko'rmaydi
+   * (jim bo'sh panel), boshqa rolga tashkilot biriktirilsa esa u hech
+   * narsani anglatmaydi va chalg'itadi.
+   */
+  private async assertAgencyRule(
+    role: UserRole,
+    agencyId: string | null,
+  ): Promise<void> {
+    if (role === UserRole.AGENCY_OFFICER && !agencyId) {
+      throw new BadRequestException(
+        'Tashkilot mas‘uli uchun tashkilot (boshqarma) tanlanishi shart',
+      );
+    }
+    if (role !== UserRole.AGENCY_OFFICER && agencyId) {
+      throw new BadRequestException(
+        'Tashkilot faqat «Tashkilot mas‘uli» roliga biriktiriladi',
+      );
+    }
+    if (agencyId && !(await this.agencies.exist({ where: { id: agencyId } }))) {
+      throw new BadRequestException('Tashkilot topilmadi');
     }
   }
 

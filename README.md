@@ -90,18 +90,19 @@ Panel → **Kataloglar**:
   tumanidan bo'lishi shart.
 * **Obyekt turlari** — kalit (`sport_school`) va nom. Kalit keyin
   o'zgarmaydi; qurilma `object_type` da shu kalitni yuboradi.
-* **MFYlar** — qo'lda (`POST /api/v1/catalogs/mahallas { name, districtKey }`)
-  yoki fayldan:
+* **MFYlar** — 16 tuman bo'yicha **878 ta MFY** rasmiy ro'yxatdan
+  (`src/database/seeds/data/andijon-tumanlar-mfylar.json`) **avtomatik**
+  yuklanadi: mavjud bazada `ImportMahallas` migratsiyasi, yangi bazada
+  tumanlar yaratilishi bilan bootstrap. Tuman nomi kalitga moslanadi
+  («Andijon shahri» → `andijon-sh`, «Boʻston tumani» → `boz`). Yangi MFY
+  qo'lda ham qo'shiladi (`POST /api/v1/catalogs/mahallas { name, districtKey }`).
+  Ro'yxat yangilansa — faylni almashtirib:
 
 ```bash
-npm run import:mfy -- --file andijon-tumanlar-mfylar.json          # sinov — hech narsa yozilmaydi
-npm run import:mfy -- --file andijon-tumanlar-mfylar.json --apply  # yozish
+npm run import:mfy                  # sinov — nima qo'shilishini ko'rsatadi
+npm run import:mfy -- --apply       # yozish (mavjudlari takrorlanmaydi)
+npm run import:mfy -- --file boshqa.json --apply
 ```
-
-Fayl shakli `[{ "tuman": "Asaka tumani", "mfylar": ["…", "…"] }]`. Tuman
-nomi kalitga moslanadi («Andijon shahri» → `andijon-sh`, «Bo'ston tumani»
-yoki «Bo'z tumani» → `boz`); tanilmagan nomlar hisobotda chiqadi. Import
-idempotent: qayta ishga tushirilsa takror yozmaydi.
 
 Qurilma ro'yxatga olinganda yoki joylashuv taklifi tasdiqlanganda plata
 yuborgan muassasa nomi katalogdan topiladi, yo'q bo'lsa katalogga
@@ -115,7 +116,12 @@ qo'shiladi.
 |---|---|
 | `super_admin`, `admin` (viloyat admini) | hammasini |
 | `operator` (**tuman mas'uli**) | faqat o'z tumani: kotyollar, qurilmalar, «Yangi qurilmalar», grafiklar, dashboard, muassasa/MFY katalogi, eksport |
-| `viewer` | hammasini, faqat o'qish |
+| `viewer` | hammasini, faqat o'qish (javobgarlar telefoni niqoblangan) |
+| `agency_officer` (**tashkilot mas'uli**) | faqat o'z tashkilotiga (boshqarmaga) qarashli muassasalarning XAVF lari — barcha tumanlar bo'yicha |
+| `responsible` (**obyekt javobgari**) | faqat o'zi biriktirilgan obyektlarning XAVF lari; qabul qiladi va chora yozadi, yopmaydi |
+
+Yangi ikki rol eski (tuman kesimidagi) bo'limlarga kira olmaydi — kotyollar,
+qurilmalar, xarita uchun `403` (`scope.helper.ts` yopiq holatda ishlaydi).
 
 Chegara **API darajasida**, `where` shartida — UI'da yashirish emas.
 Begona tuman qurilmasi so'ralsa `404` qaytadi (mavjudligi ham oshkor
@@ -235,7 +241,7 @@ npm test                 # unit testlar
 npm run test:e2e         # e2e: alohida «issiqlik_e2e» bazasida, spetsifikatsiyadagi holatlar
 npm run migration:run    # migratsiyalar
 npm run seed             # demo ma'lumot (idempotent)
-npm run import:mfy -- --file <json> [--apply]
+npm run import:mfy [-- --apply]   # MFY ro'yxatini qayta import
 npm run simulate         # ESP32 simulyatori
 ```
 
@@ -248,4 +254,113 @@ bazaga tegmaydi.
 | Vaqt | Ish | Nima qiladi |
 |---|---|---|
 | har daqiqa | `StatusWatcherJob` | signal kelmagan kotyollarni «aloqa yo'q» ga o'tkazadi |
+| har daqiqa | `IncidentWatcherJob` | XAVF larni holat bilan solishtiradi (yaratish / avtomatik bartaraf / qayta ochish) va eskalatsiya qiladi |
 | 03:20 | `MaintenanceJob` | eski telemetriya va muddati o'tgan tokenlarni tozalaydi |
+
+## 9. XAVF — aniqlash, mas'ullar, jarayon va eskalatsiya
+
+**XAVF** — past harorat yoki texnik nosozlik bo'yicha NAZORAT HODISASI: qayerda
+(tuman, muassasa, xona/qurilma), qancha (harorat va me'yor), qachondan beri,
+qaysi jadval bo'yicha, kim javobgar, kimga yuborildi, nima qilindi, hozir
+qaysi holatda. Texnik ogohlantirishlar (`alerts`) o'zgarmagan — XAVF ularning
+ustida ishlaydi.
+
+### Qanday aniqlanadi
+
+`IncidentEngineService` har daqiqada (va ogohlantirish ochilganda ~1.5 s ichida)
+«hozir qanday muammo bor» ni faol XAVF lar bilan solishtiradi:
+
+| XAVF turi | Manba | Jadvalga bo'ysunadimi |
+|---|---|---|
+| `room_low_temperature` | xona harorati < obyekt jadvalidagi minimum | **monitoring oynasi** |
+| `boiler_low_temperature` | kotyol ogohlantirishi (past/kritik harorat) | **isitish oynasi** |
+| `device_offline` | qurilmadan signal yo'q (kotyol va xona moduli) | yo'q — har doim |
+| `sensor_fault`, `overheat`, `no_circulation` | kotyol ogohlantirishi | yo'q — har doim |
+
+- **Muzlash xavfi** (xona yoki kotyol suvi ≤ 5 °C) jadvaldan qat'i nazar XAVF —
+  jadval faqat *odatiy* past haroratni yashiradi.
+- Obyekt **faqat `devices.boiler_id`** orqali aniqlanadi; qurilma yuborgan
+  `institution_id` / `institution_name` ga ishonilmaydi.
+- Bitta muammo — bitta faol XAVF (bazada qisman yagona indeks): bir vaqtda
+  kelgan telemetriya va parallel baholash dublikat yaratmaydi.
+- Harorat me'yorga qaytsa (xonada minimum + 0.5 °C) — avtomatik **RESOLVED**
+  (yopilmaydi). 60 daqiqa ichida qaytsa — o'sha hodisa qayta ochiladi, yangi
+  xabar yuborilmaydi. Dalilsiz (masalan, datchik uzilgan) yopilmaydi.
+
+### Monitoring jadvali (`/api/v1/monitoring`)
+
+Ustuvorlik: **obyekt → muassasa → obyekt turi → global**. Har jadvalda: rejim
+(`always` 24/7 yoki `schedule`), faol hafta kunlari, isitish oynasi, XAVF
+monitoringi oynasi, minimal xona harorati (bo'sh — umumiy sozlamadan),
+bayram kunlari istisnosi. Migratsiya boshlang'ich qiymat yozadi: maktab
+Du–Sha 07:00–18:00, bog'cha Du–Ju 07:00–19:00, shifoxona/poliklinika 24/7,
+qolganlari 24/7. Faqat administrator o'zgartiradi (`schedules.manage`).
+
+```http
+PUT /api/v1/monitoring/schedules
+{ "scopeType": "boiler", "scopeId": "<kotyol id>", "mode": "schedule",
+  "activeDays": [1,2,3,4,5,6], "heatingStart": "06:00", "heatingEnd": "18:00",
+  "monitorStart": "07:00", "monitorEnd": "18:00", "minRoomTemperature": 18 }
+GET  /api/v1/monitoring/schedules/effective?boilerId=…   # amaldagi jadval + «hozir oynadami»
+POST /api/v1/monitoring/holidays { "day": "2027-01-01", "name": "Yangi yil" }
+```
+
+### Tashkilot va javobgar shaxslar
+
+- **Tashkilot/boshqarma** — katalog: `/api/v1/catalogs/agencies`; muassasaga
+  `agencyId` bilan biriktiriladi. Tashkilot mas'uli: `role: "agency_officer"`,
+  `agencyId`.
+- **Javobgarlar reyestri** — `/api/v1/responsibles`: F.I.Sh., lavozim,
+  tashkiloti, xizmat telefoni, email, faol/faol emas, panel hisobi (ixtiyoriy,
+  `role: "responsible"`). Biriktirish muassasaga yoki aniq obyektga, turi
+  (`director` / `facilities` / `heating_technician` / `other`) va **asosiy**
+  belgisi bilan (bitta nishonda bitta asosiy). `GET /responsibles/coverage` —
+  asosiy javobgari yo'q muassasalar.
+- Telefon va email faqat `responsibles.contacts` ruxsati bilan ko'rinadi,
+  boshqalarga niqoblangan: `+998 ** *** ** 67`.
+
+### Kimga yuboriladi
+
+Yangi XAVF: obyekt javobgari (panel hisobi bo'lsa) + **tuman mas'ullari** +
+**tashkilot mas'ullari**; viloyat paneli realtime'da ko'radi. Har qabul
+qiluvchiga bitta qator (`incident_notifications`) — `(hodisa, foydalanuvchi,
+daraja)` yagona, takror yuborilmaydi. Bo'shliqlar (tumanda mas'ul yo'q,
+muassasa tashkilotga biriktirilmagan) hodisa tarixida yoziladi.
+
+Realtime: `/realtime` socket'iga `auth: { token: <access token> }` bilan
+ulaning — `incident:changed` (vakolat xonalari bo'yicha) va
+`incident:notification` (shaxsan). Tokensiz eski ulanish avvalgidek ishlaydi,
+lekin XAVF hodisalari unga kelmaydi. Vakolat har daqiqada qayta tekshiriladi:
+token muddati tugasa, hisob faolsizlantirilsa yoki rol/tuman/tashkilot
+o'zgarsa — socket XAVF xonalaridan chiqariladi va `auth:expired` keladi
+(mijoz yangi token bilan qayta ulanadi). Muassasa keyin tashkilotga
+biriktirilsa (yoki javobgar qo'shilsa), hali faol XAVF ham ularga yetib boradi.
+
+### Jarayon (`/api/v1/incidents`)
+
+`NEW → ACKNOWLEDGED → IN_PROGRESS → RESOLVED → CLOSED`
+
+| Amal | Endpoint | Ruxsat | Izoh |
+|---|---|---|---|
+| qabul qilish | `POST /:id/acknowledge` | `incidents.act` | ixtiyoriy |
+| chora boshlash | `POST /:id/start` | `incidents.act` | majburiy |
+| bartaraf etildi | `POST /:id/resolve` | `incidents.act` | majburiy (bajarilgan ishlar) |
+| tekshirib yopish | `POST /:id/close` | `incidents.close` | ixtiyoriy |
+| qayta ochish | `POST /:id/reopen` | `incidents.close` | majburiy |
+| izoh / bajarilgan ish | `POST /:id/comments` | `incidents.act` | `kind: comment \| action` |
+
+O'chirish endpointi yo'q. Har o'zgarish `incident_events` (append-only tarix)
+va audit jurnaliga yoziladi. Panellar: `GET /incidents` (filtrlar: holat, tur,
+tuman, tashkilot, muassasa, eskalatsiya), `GET /incidents/:id` (karta),
+`/summary`, `/recurring`, `/report?groupBy=district|agency|organization|kind`,
+`/notifications/my`.
+
+### Eskalatsiya
+
+`GET|PUT /api/v1/incidents/escalation-rules` (`escalation.manage`). Qoida:
+og'irlik (bo'sh — hammasi), daraja, shart (`not_acknowledged` /
+`not_resolved`), necha daqiqadan keyin, kimga (`district` / `agency` /
+`region`). Har daraja bir marta ishlaydi — cheksiz takror yo'q. Boshlang'ich:
+kritik — 15 daqiqada qabul qilinmasa / 2 soatda hal qilinmasa viloyatga;
+qolganlari — 30 daqiqa / 4 soat.
+

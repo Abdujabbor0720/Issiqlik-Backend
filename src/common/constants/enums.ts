@@ -15,6 +15,27 @@ export enum UserRole {
   OPERATOR = 'operator',
   /** Kuzatuvchi: faqat ko'radi, hech narsani o'zgartira olmaydi. */
   VIEWER = 'viewer',
+  /**
+   * TASHKILOT (BOSHQARMA) MAS'ULI — FAQAT o'z tashkilotiga qarashli
+   * muassasalarning XAVF hodisalari (`agencyId` bilan cheklangan).
+   *
+   * ⚠️⚠️ Tuman bo'yicha EMAS: «Maktabgacha ta'lim boshqarmasi» mas'uli
+   * 16 tumandagi bog'chalarni ko'radi, lekin o'sha tumanlardagi
+   * shifoxonalarni ko'rmaydi. Shuning uchun u `districtId` bilan emas,
+   * `agencyId` bilan cheklanadi va eski (tuman kesimidagi) endpointlarga
+   * umuman kira olmaydi (`scope.helper.ts` — yopiq holatda ishlaydi).
+   */
+  AGENCY_OFFICER = 'agency_officer',
+  /**
+   * OBYEKT JAVOBGARI — muassasaga biriktirilgan shaxs (direktor, xo'jalik
+   * mudiri, isitish texnigi) o'z paneli bilan.
+   *
+   * ⚠️ Ko'rish chegarasi — FAQAT o'zi biriktirilgan obyektlar
+   * (`responsible_assignments` orqali, `responsible_persons.user_id`).
+   * Hodisani qabul qiladi va chora yozadi, lekin YOPMAYDI: «tekshirilgan
+   * holda yakunlash» yuqori mas'ulning qarori.
+   */
+  RESPONSIBLE = 'responsible',
 }
 
 /**
@@ -248,6 +269,12 @@ export enum AuditAction {
   LOGIN_FAILED = 'login_failed',
   LOGOUT = 'logout',
   EXPORT = 'export',
+  /** XAVF bo'yicha mas'ullarga ogohlantirish yuborildi. */
+  NOTIFY = 'notify',
+  /** XAVF yuqori vakolatli mas'ulga ko'tarildi. */
+  ESCALATE = 'escalate',
+  /** XAVF holati o'zgardi (qabul qilindi, chora, bartaraf, yopildi). */
+  STATUS_CHANGE = 'status_change',
 }
 
 /**
@@ -266,5 +293,125 @@ export const ROLE_LEVEL: Record<UserRole, number> = {
   [UserRole.SUPER_ADMIN]: 40,
   [UserRole.ADMIN]: 30,
   [UserRole.OPERATOR]: 20,
+  /*
+   * ⚠️ Tashkilot mas'uli tuman mas'uli bilan BIR darajada: ikkalasi ham
+   * o'z kesimining rahbari. Administrator (30) ikkalasini ham yarata
+   * oladi, ular esa bir-birining hisobiga tega olmaydi.
+   */
+  [UserRole.AGENCY_OFFICER]: 20,
+  [UserRole.RESPONSIBLE]: 15,
   [UserRole.VIEWER]: 10,
 };
+
+// ════════════════════════ XAVF (INCIDENT) ════════════════════════
+
+/**
+ * XAVF TURI — mas'ul uchun MA'NO bo'yicha guruhlangan.
+ *
+ * ⚠️⚠️ `AlertType` bilan 1:1 EMAS va bu ataylab. Ogohlantirish — texnik
+ * signal (bitta kotyolda «o'rta» → «kritik» o'tishi eski qatorni yopib,
+ * yangisini ochadi). XAVF esa mas'ulning ish varag'i: kotyol 45 °C dan
+ * 25 °C ga sovisa bu BITTA muammo va mas'ulning izohlari, qabul qilgani,
+ * eskalatsiya tarixi bitta hodisada qolishi kerak. 1:1 bo'lsa, har
+ * o'tishda yangi «XAVF» paydo bo'lib, qilingan ish yo'qolardi.
+ */
+export enum IncidentKind {
+  /** Xona havosi belgilangan minimumdan past — asosiy XAVF. */
+  ROOM_LOW_TEMPERATURE = 'room_low_temperature',
+  /** Kotyol chiqish harorati me'yordan past (isitmayapti). */
+  BOILER_LOW_TEMPERATURE = 'boiler_low_temperature',
+  /** Qurilmadan signal kelmayapti (kotyol yoki xona moduli). */
+  DEVICE_OFFLINE = 'device_offline',
+  /** Datchik qiymat bermayapti. */
+  SENSOR_FAULT = 'sensor_fault',
+  /** Ortiqcha qizish — texnik xavfsizlik. */
+  OVERHEAT = 'overheat',
+  /** Suv aylanmayapti — texnik xavfsizlik. */
+  NO_CIRCULATION = 'no_circulation',
+}
+
+/**
+ * XAVF HOLATI — mas'ul jarayonining bosqichlari.
+ *
+ * ⚠️ `RESOLVED` va `CLOSED` AJRATILGAN: «bartaraf etildi» — mas'ulning
+ * (yoki harorat tiklanganda tizimning) DA'VOSI, «yopildi» — yuqori
+ * mas'ul uni TEKSHIRGANI. Bitta holat bo'lsa, javobgar o'z ishini o'zi
+ * qabul qilib qo'ygan bo'lardi.
+ */
+export enum IncidentStatus {
+  NEW = 'new',
+  ACKNOWLEDGED = 'acknowledged',
+  IN_PROGRESS = 'in_progress',
+  RESOLVED = 'resolved',
+  CLOSED = 'closed',
+}
+
+/** Faol (hali bartaraf etilmagan) holatlar — dublikat qo'riqchisi shular bo'yicha. */
+export const ACTIVE_INCIDENT_STATUSES: readonly IncidentStatus[] = [
+  IncidentStatus.NEW,
+  IncidentStatus.ACKNOWLEDGED,
+  IncidentStatus.IN_PROGRESS,
+];
+
+/** Javobgarlik turi — bitta obyektda bir nechta javobgar bo'lishi mumkin. */
+export enum ResponsibilityType {
+  /** Muassasa rahbari (direktor, mudira, bosh shifokor). */
+  DIRECTOR = 'director',
+  /** Xo'jalik ishlari bo'yicha mas'ul. */
+  FACILITIES = 'facilities',
+  /** Isitish tizimi bo'yicha texnik mas'ul. */
+  HEATING_TECHNICIAN = 'heating_technician',
+  OTHER = 'other',
+}
+
+/** Monitoring jadvali rejimi. */
+export enum ScheduleMode {
+  /** 24/7 — tibbiyot birlashmalari va uzluksiz isitiladigan obyektlar. */
+  ALWAYS = 'always',
+  /** Hafta kunlari va soatlar bo'yicha. */
+  SCHEDULE = 'schedule',
+}
+
+/**
+ * JADVAL QAYERGA TEGISHLI — ustuvorlik tartibida (kuchlisi yuqorida):
+ * `boiler` → `organization` → `object_type` → `global`.
+ */
+export enum ScheduleScope {
+  BOILER = 'boiler',
+  ORGANIZATION = 'organization',
+  OBJECT_TYPE = 'object_type',
+  GLOBAL = 'global',
+}
+
+/** Eskalatsiya sharti. */
+export enum EscalationCondition {
+  /** Belgilangan vaqtda hech kim QABUL QILMADI (holat hamon `new`). */
+  NOT_ACKNOWLEDGED = 'not_acknowledged',
+  /** Belgilangan vaqtda bartaraf ETILMADI (holat hamon faol). */
+  NOT_RESOLVED = 'not_resolved',
+}
+
+/** Kimga ogohlantirish boradi. */
+export enum NotifyAudience {
+  /** Obyektga biriktirilgan javobgar shaxs(lar)ning hisobi. */
+  RESPONSIBLE = 'responsible',
+  /** Tuman mas'ullari (`operator`). */
+  DISTRICT = 'district',
+  /** Tashkilot / boshqarma mas'ullari (`agency_officer`). */
+  AGENCY = 'agency',
+  /** Viloyat mas'ullari (`admin`, `super_admin`). */
+  REGION = 'region',
+}
+
+/** XAVF tarixidagi yozuv turi. */
+export enum IncidentEventType {
+  CREATED = 'created',
+  NOTIFIED = 'notified',
+  STATUS_CHANGED = 'status_changed',
+  COMMENT = 'comment',
+  ACTION = 'action',
+  SEVERITY_RAISED = 'severity_raised',
+  AUTO_RESOLVED = 'auto_resolved',
+  REOPENED = 'reopened',
+  ESCALATED = 'escalated',
+}
