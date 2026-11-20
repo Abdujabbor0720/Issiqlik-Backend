@@ -148,17 +148,18 @@ async function main(): Promise<void> {
   const districtRows = await districts.find({ order: { name: 'ASC' } });
 
   // ─────────── 3. Superadmin ───────────
-  const adminLogin = process.env.ADMIN_LOGIN || 'Issqilik2026';
   /*
-   * ⚠️ Parol YO'Q bo'lsa — seed TO'XTAYDI. Sukutdagi qiymat
-   *    berilsa, u ommaviy kodda ko'rinib, hamma biladigan
-   *    parolli superadmin paydo bo'lardi.
+   * ⚠️ Login ham, parol ham FAQAT `.env` dan — kodda zaxira qiymat YO'Q.
+   *    Ilgari bu yerda haqiqiy superadmin logini qotirilgan edi va u
+   *    ommaviy repozitoriyada (hamda kirish sahifasining namunasida)
+   *    ko'rinib turardi. Login — hujumchi uchun yarim yo'l.
    */
+  const adminLogin = process.env.ADMIN_LOGIN?.trim();
   const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword) {
+  if (!adminLogin || !adminPassword) {
     throw new Error(
-      '.env da ADMIN_PASSWORD berilmagan — superadmin yaratilmadi. ' +
-        'Parolni .env ga yozing (qotirilgan zaxira qiymat ataylab yo‘q).',
+      '.env da ADMIN_LOGIN yoki ADMIN_PASSWORD berilmagan — superadmin yaratilmadi. ' +
+        'Ikkalasini .env ga yozing (qotirilgan zaxira qiymat ataylab yo‘q).',
     );
   }
   const adminExists = await users.findOne({ where: { login: adminLogin } });

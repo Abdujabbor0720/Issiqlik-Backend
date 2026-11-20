@@ -3,8 +3,9 @@
  *
  * ⚠️ Sukut bo'yicha SINOV (hech narsa yozilmaydi). Yozish — `--apply`.
  *
- *   npm run import:mfy -- --file andijon-tumanlar-mfylar.json
- *   npm run import:mfy -- --file andijon-tumanlar-mfylar.json --apply
+ *   npm run import:mfy                      # repodagi ro'yxat, sinov
+ *   npm run import:mfy -- --apply           # yozish
+ *   npm run import:mfy -- --file boshqa.json [--apply]
  *
  * Fayl shakli: [{ "tuman": "Asaka tumani", "mfylar": ["...", "..."] }, ...]
  * Tuman nomi kalitga moslanadi («Andijon shahri» → andijon-sh,
@@ -13,6 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { AppDataSource } from '../config/data-source';
 import {
+  MAHALLA_FILE_PATH,
   applyMahallaPlan,
   buildMahallaPlan,
   parseMahallaFile,
@@ -27,9 +29,8 @@ function arg(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
-  const file = arg('file');
-  if (!file)
-    throw new Error('--file <andijon-tumanlar-mfylar.json> berilmagan');
+  // ⚠️ Fayl berilmasa — repodagi rasmiy ro'yxat (migratsiya ham shuni o'qiydi).
+  const file = arg('file') ?? MAHALLA_FILE_PATH;
   const apply = process.argv.includes('--apply');
   const entries = parseMahallaFile(JSON.parse(readFileSync(file, 'utf8')));
 

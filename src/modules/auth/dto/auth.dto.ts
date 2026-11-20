@@ -4,7 +4,8 @@ import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 import { trim } from '../../../common/dto/transforms';
 
 export class LoginDto {
-  @ApiProperty({ example: 'Issqilik2026' })
+  // ⚠️ Misol HAQIQIY login bo'lmasligi kerak — Swagger ommaviy ko'rinadi.
+  @ApiProperty({ example: 'masul.asaka' })
   @Transform(trim)
   @IsString()
   @IsNotEmpty({ message: 'Login kiritilmagan' })

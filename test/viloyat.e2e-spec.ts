@@ -155,6 +155,29 @@ describe('Andijon viloyati — qurilma kontrakti va viloyat tuzilmasi (e2e)', ()
     });
   });
 
+  it('MFY katalogi andijon-tumanlar-mfylar.json dan: 878 ta, tuman kalitlariga moslangan', async () => {
+    const all = await http
+      .get('/api/v1/catalogs/mahallas?limit=1')
+      .set(auth())
+      .expect(200);
+    expect(all.body.meta.total).toBe(878);
+
+    const expected: Record<string, number> = {
+      'andijon-sh': 91,
+      'xonobod-sh': 15,
+      boz: 25,
+      asaka: 76,
+      qorgontepa: 61,
+    };
+    for (const [key, count] of Object.entries(expected)) {
+      const res = await http
+        .get(`/api/v1/catalogs/mahallas?districtKey=${key}&limit=1`)
+        .set(auth())
+        .expect(200);
+      expect(res.body.meta.total).toBe(count);
+    }
+  });
+
   it('tumanlar katalogi: 16 ta kalit proshivkadagi bilan aynan bir xil', () => {
     expect(Object.keys(districts).sort()).toEqual(
       [

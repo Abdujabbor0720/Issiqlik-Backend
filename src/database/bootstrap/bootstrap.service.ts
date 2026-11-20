@@ -13,6 +13,11 @@ import { UserRole } from '../../common/constants/enums';
 import { District } from '../entities/district.entity';
 import { Region } from '../entities/region.entity';
 import { User } from '../entities/user.entity';
+import {
+  applyMahallaPlan,
+  buildMahallaPlan,
+  readMahallaFile,
+} from '../../modules/geo/import/mahalla-import.core';
 
 interface DistrictFeature {
   properties: {
@@ -61,6 +66,7 @@ export class BootstrapService implements OnApplicationBootstrap {
   async onApplicationBootstrap(): Promise<void> {
     try {
       await this.ensureGeo();
+      await this.ensureMahallas();
       await this.ensureSuperAdmin();
     } catch (error) {
       /*
@@ -74,6 +80,34 @@ export class BootstrapService implements OnApplicationBootstrap {
         error instanceof Error ? error.stack : String(error),
       );
     }
+  }
+
+  /**
+   * MFYLAR — `andijon-tumanlar-mfylar.json` dan, FAQAT katalog bo'sh bo'lsa.
+   *
+   * ⚠️ Mavjud bazada MFYlarni `ImportMahallas` migratsiyasi yozadi. Yangi
+   * bazada esa tumanlar migratsiyadan KEYIN (shu bootstrap'da) yaratiladi va
+   * migratsiya bo'sh o'tadi — import shu yerda, AYNI yadro bilan.
+   */
+  private async ensureMahallas(): Promise<void> {
+    const rows = await this.districts.query<
+      Array<{ mahallas: number; districts: number }>
+    >(
+      `SELECT (SELECT COUNT(*) FROM "mahallas")::int AS mahallas,
+              (SELECT COUNT(*) FROM "districts")::int AS districts`,
+    );
+    if (!rows[0] || rows[0].mahallas > 0 || rows[0].districts === 0) return;
+
+    const entries = readMahallaFile();
+    if (!entries) return;
+    const plan = await buildMahallaPlan(this.districts.manager, entries);
+    const inserted = await applyMahallaPlan(this.districts.manager, plan);
+    this.logger.log(
+      `MFYlar yozildi: ${inserted} ta` +
+        (plan.unmatched.length
+          ? ` (tanilmagan tumanlar: ${plan.unmatched.join(', ')})`
+          : ''),
+    );
   }
 
   /** Andijon viloyati va uning 16 tumani — geojson fayldan. */
